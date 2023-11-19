@@ -132,8 +132,8 @@ Ieee802154Radio_usb::Buffer::Buffer(Node &node, coco::Buffer &buffer)
 Ieee802154Radio_usb::Buffer::~Buffer() {
 }
 
-void Ieee802154Radio_usb::Buffer::cancel() {
-	this->buffer.cancel();
+bool Ieee802154Radio_usb::Buffer::cancel() {
+	return this->buffer.cancel();
 }
 
 bool Ieee802154Radio_usb::Buffer::startInternal(int size, Op op) {

@@ -3,15 +3,12 @@
 #include <coco/Ieee802154Radio.hpp>
 #include <coco/BufferImpl.hpp>
 #include <coco/PseudoRandom.hpp>
+#include <coco/IntrusiveList.hpp>
 #include <coco/platform/Loop_RTC0.hpp>
+#include <coco/platform/nvic.hpp>
 
 
 namespace coco {
-
-extern "C" {
-	void RADIO_IRQHandler();
-	void TIMER0_IRQHandler();
-}
 
 /**
 	Implementation of IEEE 802.15.4 radio using RADIO and TIMER0.
@@ -26,14 +23,10 @@ extern "C" {
  			CC[2]: time of last packet received or sent
 			CC[3]: backoff timeout
 		NRF_PPI
- 			CH[27]: RADIO->EVENTS_END -> TIMER0->TASKS_CAPTURE[2]
-		NRF_EGU0
- 			TRIGGER[0]: energy detection
- 			TRIGGER[1]: receive queue
-			TRIGGER[2]: send queue
+ 			CH[27]: RADIO.EVENTS_END -> TIMER0.TASKS_CAPTURE[2]
 
 	Glossary:
-		CCA: Clear Channel Assessment (-> ED and/or carrier detection)
+		CCA: Clear Channel Assessment (-> energy and/or carrier detection)
 		ED: Energy Detection on a radio channel
 		RFD: Reduced-function defice (can only talk to -> FFDs)
 		FFD: Full-function device
@@ -47,12 +40,10 @@ extern "C" {
 	Bugs:
 		No timeout for send() with SendFlags::AWAIT_DATA_REQUEST, i.e. waits forever
 */
-class Ieee802154Radio_RADIO_TIMER0_EGU0 : public Ieee802154Radio, public Loop_RTC0::Handler {
-	friend void RADIO_IRQHandler();
-	friend void TIMER0_IRQHandler();
+class Ieee802154Radio_RADIO_TIMER0 : public Ieee802154Radio {
 public:
-	Ieee802154Radio_RADIO_TIMER0_EGU0(Loop_RTC0 &loop);
-	~Ieee802154Radio_RADIO_TIMER0_EGU0() override;
+	Ieee802154Radio_RADIO_TIMER0(Loop_RTC0 &loop);
+	~Ieee802154Radio_RADIO_TIMER0() override;
 
 	void start(int channel) override;
 	void stop() override;
@@ -63,11 +54,11 @@ public:
 	/**
 		Virtual node with own pan id and address. This can be used to use several networks and protocols at the same time
 	*/
-	class Node : public Ieee802154Radio::Node, public LinkedListNode {
-		friend class Ieee802154Radio_RADIO_TIMER0_EGU0;
+	class Node : public Ieee802154Radio::Node, public IntrusiveListNode {
+		friend class Ieee802154Radio_RADIO_TIMER0;
 		friend class Buffer;
 	public:
-		Node(Ieee802154Radio_RADIO_TIMER0_EGU0 &radio);
+		Node(Ieee802154Radio_RADIO_TIMER0 &device);
 		~Node() override;
 
 		State state() override;
@@ -85,7 +76,7 @@ public:
 		// sendBuffers (called on receive of data request in the interrupt handler)
 		bool request(uint16_t panId, const uint8_t *destinationAddress, int addressLength);
 
-		Ieee802154Radio_RADIO_TIMER0_EGU0 &radio;
+		Ieee802154Radio_RADIO_TIMER0 &device;
 
 		uint64_t longAddress;
 		uint16_t pan;
@@ -93,36 +84,56 @@ public:
 		FilterFlags filterFlags;
 
 		// list of buffers
-		LinkedList<Buffer> buffers;
+		IntrusiveList<Buffer> buffers;
 
-		// list of receive buffers
-		LinkedList2<Buffer> receiveBuffers;
+		// list of active receive buffers
+		nvic::Queue<Buffer> receiveBuffers;
 
 		// list of buffers that can be sent on data request
-		LinkedList2<Buffer> requestBuffers;
+		nvic::Queue<Buffer> requestBuffers;
 	};
 
-	class Buffer : public BufferImpl, public LinkedListNode, public LinkedListNode2 {
-		friend class Ieee802154Radio_RADIO_TIMER0_EGU0;
+	/**
+		Buffer for transferring data over RADIO.
+		Derives from IntrusiveListNode for the list of buffers and Loop_TIM2::Handler2 to be notified from the event loop
+	*/
+	class Buffer : public BufferImpl, public IntrusiveListNode, public Loop_RTC0::Handler2 {// public IntrusiveListNode2 {
+		friend class Ieee802154Radio_RADIO_TIMER0;
 	public:
 		Buffer(Node &node);
 		~Buffer() override;
 
-		void cancel() override;
+		bool start(Op op) override;
+		bool cancel() override;
 
 	protected:
-		bool startInternal(int size, Op op) override;
+		//bool startInternal(int size, Op op) override;
+		void handle() override;
 
-		// first byte contains the length of the payload plus 2 for crc
-		uint8_t packet[1 + PACKET_LENGTH];
 		Node &node;
 
-		bool finished;
+		// first byte contains the length of the payload plus 2 for crc
+		uint8_t packet[MAX_HEADER_SIZE + MAX_PAYLOAD_SIZE];
+
+		enum class Mode {
+			// is in node.receiveTransfers
+			RECEIVE,
+
+			// is in node.requestBuffers
+			REQUEST,
+
+			// is in device.sendTransfers
+			SEND,
+		};
+		Mode mode;
+
+		//bool finished;
 	};
 
-protected:
-	void handle() override;
+	void RADIO_IRQHandler();
+	void TIMER0_IRQHandler();
 
+protected:
 	// start receiving packets (enable base band decoder)
 	void startReceive();
 
@@ -148,13 +159,14 @@ protected:
 	void startSendAck();
 
 	// finish send operation
-	void finishSend();
+	void finishSend(bool success);
 
 	// interrupt handlers
 	void handleRadio();
 	void handleTimer();
 
-	static Ieee802154Radio_RADIO_TIMER0_EGU0 *instance;
+	//static Ieee802154Radio_RADIO_TIMER0_EGU0 *instance;
+	Loop_RTC0 &loop;
 
 	// radio state
 	State stat = State::DISABLED;
@@ -162,20 +174,19 @@ protected:
 	CoroutineTaskList<> stateTasks;
 
 	// list of virtual nodes
-	LinkedList<Node> nodes;
+	IntrusiveList<Node> nodes;
 
 	// receiver is enabled if at least one receive buffer is queued (in Channel::receiveBuffers) or when waiting for ACK
 	bool receiverEnabled = false;
 
 	// receive packet, gets copied to first receiveBuffer of each channel if it passes the filter
-	uint8_t receivePacket[1 + PACKET_LENGTH];
+	uint8_t receivePacket[1 + MAX_PAYLOAD_SIZE];
 
 	// duration of inter frame spacing (depends on received packet length)
 	uint32_t ifsDuration = 0;
 
-	// list of buffers that are ready to send
-	LinkedList2<Buffer> sendBuffers;
-	Buffer *sendBuffer = nullptr;
+	// list of active send transfers
+	nvic::Queue<Buffer> sendBuffers;
 	uint8_t ackPacket[4] = {5, 0x02, 0x00, 0};
 
 	enum SendState : uint8_t {
@@ -199,7 +210,7 @@ protected:
 	int backoffExponent;
 	int backoffCount;
 
-	// pseudo random generator for backoff time
+	// pseudo random number generator for backoff time
 	XorShiftRandom random;
 
 	// action to take on END event (both receive and send)

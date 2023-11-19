@@ -6,7 +6,8 @@
 #endif
 
 /*
-	This test receives packets and outputs them to the console (native) or sets the debug led color dependent on the packet length
+	This test receives packets and outputs them to the console (native) or sets the debug led color dependent on the packet length.
+	ACK is sent when requested, therefore can be used as receiver for RadioSendTest.cpp
 */
 
 // receive packets
@@ -19,11 +20,10 @@ Coroutine receive(Loop &loop, Buffer &radioBuffer) {
 #ifdef NATIVE
 		std::cout << "Waiting for IEEE 802.15.4 packets..." << std::endl;
 #endif
-		int count = 0;
 		while (radioBuffer.ready()) {
 			// wait for receive packet
-			co_await radioBuffer.read();
-			int transferred = radioBuffer.transferred();
+			co_await radioBuffer.read(radioBuffer.capacity());
+			int transferred = radioBuffer.size();
 
 #ifdef NATIVE
 			std::cout << std::dec << '(' << transferred << ") ";
@@ -40,9 +40,6 @@ Coroutine receive(Loop &loop, Buffer &radioBuffer) {
 				debug::toggleBlue();
 			else
 				debug::toggleGreen();
-
-			//++count;
-			//debug::set(transferred == 0 ? debug::RED : count);
 #endif
 		}
 	}
@@ -50,9 +47,6 @@ Coroutine receive(Loop &loop, Buffer &radioBuffer) {
 
 
 int main() {
-	debug::init();
-	Drivers drivers;
-
 	drivers.node.configure(0, UINT64_C(0x0000133700001337), 0x1337,
 		Ieee802154Radio::FilterFlags::PASS_DEST_LONG | Ieee802154Radio::FilterFlags::PASS_DEST_SHORT | Ieee802154Radio::FilterFlags::HANDLE_ACK);
 //		Ieee802154Radio::FilterFlags::PASS_ALL);

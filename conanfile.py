@@ -15,10 +15,10 @@ class Project(ConanFile):
     generators = "CMakeDeps", "CMakeToolchain"
     exports_sources = "conanfile.py", "CMakeLists.txt", "coco/*", "test/*", "tools/*"
     requires = [
-        "coco-loop/0.5.0",
-        "coco-buffer/0.2.0",
+        "coco-loop/pow10",
+        "coco-buffer/pow10",
     ]
-    tool_requires = "coco-toolchain/0.2.0"
+    tool_requires = "coco-toolchain/pow10"
 
 
     # check if we are cross compiling
@@ -30,10 +30,10 @@ class Project(ConanFile):
     def requirements(self):
         # todo: maybe put RadioDevice into separate project
         #if self.options.platform == "native" or self.options.platform == "emu":
-        self.requires("coco-usb/0.5.0") # radio via USB
+        self.requires("coco-usb/pow10") # radio via USB
 
     def build_requirements(self):
-        self.test_requires("coco-devboards/0.5.0")
+        self.test_requires("coco-devboards/pow10")
 
     def configure(self):
         # pass platform option to dependencies

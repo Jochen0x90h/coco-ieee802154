@@ -25,7 +25,7 @@ public:
 	/**
 		Virtual node with own pan id and address. This can be used to use several networks and protocols at the same time
 	*/
-	class Node : public LinkedListNode, public Ieee802154Radio::Node {
+	class Node : public IntrusiveListNode, public Ieee802154Radio::Node {
 		friend class Ieee802154Radio_usb;
 		friend class Buffer;
 	public:
@@ -53,16 +53,16 @@ public:
 		//LinkedList2<Buffer> receiveBuffers;
 
 		// list of send buffers
-		LinkedList2<Buffer> sendBuffers;
+		IntrusiveList2<Buffer> sendBuffers;
 	};
 
-	class Buffer : public BufferImpl, public LinkedListNode2 {
+	class Buffer : public BufferImpl, public IntrusiveListNode2 {
 		friend class Node;
 	public:
 		Buffer(Node &node, coco::Buffer &buffer);
 		~Buffer() override;
 
-		void cancel() override;
+		bool cancel() override;
 
 	protected:
 		bool startInternal(int size, Op op) override;
@@ -84,7 +84,7 @@ protected:
 	bool startStopFlag = false;
 	int channel;
 
-	LinkedList<Node> nodes;
+	IntrusiveList<Node> nodes;
 };
 
 } // namespace coco

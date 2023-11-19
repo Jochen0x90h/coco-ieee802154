@@ -20,7 +20,8 @@ struct Drivers {
 	UsbHost_native::BulkBuffer bulkBuffer{bulkEndpoint, Ieee802154Radio::PACKET_LENGTH};
 
 	// radio
-	Ieee802154Radio_usb radio{controlBuffer};
-	Ieee802154Radio_usb::Node node{radio, bulkEndpoint};
-	Ieee802154Radio_usb::Buffer radioBuffer{node, bulkBuffer};
+	using Radio = Ieee802154Radio_usb;
+	Radio radio{controlBuffer};
+	Radio::Node node{radio, bulkEndpoint};
+	Radio::Buffer radioBuffer{node, bulkBuffer};
 };

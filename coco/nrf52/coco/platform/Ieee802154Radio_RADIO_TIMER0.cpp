@@ -1,4 +1,4 @@
-#include "Ieee802154Radio_RADIO_TIMER0_EGU0.hpp"
+#include "Ieee802154Radio_RADIO_TIMER0.hpp"
 //#include <coco/debug.hpp>
 #include <coco/ieee802154.hpp>
 #include <coco/platform/nvic.hpp>
@@ -74,10 +74,12 @@ static inline void unlock() {
 
 
 
-// Ieee802154Radio_RADIO_TIMER0_EGU0
+// Ieee802154Radio_RADIO_TIMER0
 
-Ieee802154Radio_RADIO_TIMER0_EGU0::Ieee802154Radio_RADIO_TIMER0_EGU0(Loop_RTC0 &loop) {
-	Ieee802154Radio_RADIO_TIMER0_EGU0::instance = this;
+Ieee802154Radio_RADIO_TIMER0::Ieee802154Radio_RADIO_TIMER0(Loop_RTC0 &loop)
+	: loop(loop)
+{
+	//Ieee802154Radio_RADIO_TIMER0_EGU0::instance = this;
 
 	// init timer
 	NRF_TIMER0->MODE = N(TIMER_MODE_MODE, Timer);
@@ -105,7 +107,7 @@ Ieee802154Radio_RADIO_TIMER0_EGU0::Ieee802154Radio_RADIO_TIMER0_EGU0(Loop_RTC0 &
 		| V(RADIO_PCNF0_LFLEN, 8) // LENGTH is 8 bit
 		| V(RADIO_PCNF0_S1LEN, 0); // no S1
 	NRF_RADIO->PCNF1 =
-		V(RADIO_PCNF1_MAXLEN, MAX_PAYLOAD_LENGTH) // maximum length of PAYLOAD
+		V(RADIO_PCNF1_MAXLEN, MAX_PAYLOAD_SIZE) // maximum length of PAYLOAD
 		| N(RADIO_PCNF1_ENDIAN, Little); // little endian
 
 	// configure clear channel assessment (CCA)
@@ -123,26 +125,17 @@ Ieee802154Radio_RADIO_TIMER0_EGU0::Ieee802154Radio_RADIO_TIMER0_EGU0(Loop_RTC0 &
 		| N(RADIO_INTENSET_DISABLED, Set);
 	nvic::enable(RADIO_IRQn);
 
-	// capture time when packet was received or sent (RADIO:END -> TIMER0:CAPTURE[2])
+	// capture time when packet was received or sent (RADIO.END -> TIMER0.CAPTURE[2])
 	NRF_PPI->CHENSET = 1 << 27;
-
-	// init event generator
-	NRF_EGU0->INTENSET =
-		N(EGU_INTENSET_TRIGGERED0, Set)
-		| N(EGU_INTENSET_TRIGGERED1, Set)
-		| N(EGU_INTENSET_TRIGGERED2, Set);
-
-	loop.handlers.add(*this);
 }
 
-Ieee802154Radio_RADIO_TIMER0_EGU0::~Ieee802154Radio_RADIO_TIMER0_EGU0() {
+Ieee802154Radio_RADIO_TIMER0::~Ieee802154Radio_RADIO_TIMER0() {
 }
 
-void Ieee802154Radio_RADIO_TIMER0_EGU0::start(int channel) {
+void Ieee802154Radio_RADIO_TIMER0::start(int channel) {
 	assert(channel >= 11 && channel <= 26);
 
 	// stop if currently active
-	//if (this->active)
 	if (this->stat == State::READY)
 		stop();
 
@@ -155,14 +148,15 @@ void Ieee802154Radio_RADIO_TIMER0_EGU0::start(int channel) {
 
 	lock();
 
+	// set state
+	this->stat = State::READY;
+	this->receiverEnabled = true;
+
 	// enable radio if it is currently disabled. If not, then it gets enabled on DISABLED event in the interrupt handler
 	if (isDisabled()) {
 		// enable receiving mode (not the baseband decoder, packets will not be received yet)
 		NRF_RADIO->TASKS_RXEN = TRIGGER; // -> RXREADY
 	}
-
-	// set state
-	this->stat = State::READY;
 
 	unlock();
 
@@ -177,7 +171,7 @@ void Ieee802154Radio_RADIO_TIMER0_EGU0::start(int channel) {
 	this->stateTasks.doAll();
 }
 
-void Ieee802154Radio_RADIO_TIMER0_EGU0::stop() {
+void Ieee802154Radio_RADIO_TIMER0::stop() {
 	// disable timer
 	NRF_TIMER0->INTENCLR = N(TIMER_INTENCLR_COMPARE0, Clear)
 		| N(TIMER_INTENCLR_COMPARE1, Clear)
@@ -199,12 +193,17 @@ void Ieee802154Radio_RADIO_TIMER0_EGU0::stop() {
 	NRF_RADIO->TASKS_DISABLE = TRIGGER; // -> DISABLED
 
 	// set state of buffers to disabled
+	this->sendBuffers.clear();
 	for (auto &node : this->nodes) {
+		node.receiveBuffers.clear();
+		node.requestBuffers.clear();
+
 		for (auto &buffer : node.buffers) {
 			// cancel (remove from receiveBuffers, requestBuffers or sendBuffers)
-			buffer.remove2();
+			//buffer.remove2();
+			buffer.p.size = 0;
+
 			unlock();
-			buffer.xferred = 0;
 			buffer.setDisabled();
 			lock();
 		}
@@ -217,36 +216,36 @@ void Ieee802154Radio_RADIO_TIMER0_EGU0::stop() {
 }
 
 
-// Ieee802154_RADIO_TIMER0_EGU0::Node
+// Node
 
-Ieee802154Radio_RADIO_TIMER0_EGU0::Node::Node(Ieee802154Radio_RADIO_TIMER0_EGU0 &radio)
-	: radio(radio)
+Ieee802154Radio_RADIO_TIMER0::Node::Node(Ieee802154Radio_RADIO_TIMER0 &device)
+	: device(device)
 {
-	radio.nodes.add(*this);
+	device.nodes.add(*this);
 }
 
-Ieee802154Radio_RADIO_TIMER0_EGU0::Node::~Node() {
+Ieee802154Radio_RADIO_TIMER0::Node::~Node() {
 }
 
-Device::State Ieee802154Radio_RADIO_TIMER0_EGU0::Node::state() {
-	return this->radio.stat;
+Device::State Ieee802154Radio_RADIO_TIMER0::Node::state() {
+	return this->device.stat;
 }
 
-Awaitable<> Ieee802154Radio_RADIO_TIMER0_EGU0::Node::stateChange(int waitFlags) {
-	if ((waitFlags & (1 << int(State::READY))) == 0)
+Awaitable<> Ieee802154Radio_RADIO_TIMER0::Node::stateChange(int waitFlags) {
+	if ((waitFlags & (1 << int(this->device.stat))) == 0)
 		return {};
-	return {this->radio.stateTasks};
+	return {this->device.stateTasks};
 }
 
-int Ieee802154Radio_RADIO_TIMER0_EGU0::Node::getBufferCount() {
+int Ieee802154Radio_RADIO_TIMER0::Node::getBufferCount() {
 	return this->buffers.count();
 }
 
-coco::Buffer &Ieee802154Radio_RADIO_TIMER0_EGU0::Node::getBuffer(int index) {
+coco::Buffer &Ieee802154Radio_RADIO_TIMER0::Node::getBuffer(int index) {
 	return this->buffers.get(index);
 }
 
-void Ieee802154Radio_RADIO_TIMER0_EGU0::Node::configure(uint16_t pan, uint64_t longAddress,
+void Ieee802154Radio_RADIO_TIMER0::Node::configure(uint16_t pan, uint64_t longAddress,
 	uint16_t shortAddress, FilterFlags filterFlags)
 {
 	this->longAddress = longAddress;
@@ -254,12 +253,11 @@ void Ieee802154Radio_RADIO_TIMER0_EGU0::Node::configure(uint16_t pan, uint64_t l
 	this->shortAddress = shortAddress;
 	this->filterFlags = filterFlags;
 
-	// use shortAddress as additional random seed
-	this->radio.random.reset((this->radio.random.draw() + shortAddress) | 0x10000);
+	// use shortAddress as random seed
+	this->device.random.reset(shortAddress | 0x12340000);
 }
 
-bool Ieee802154Radio_RADIO_TIMER0_EGU0::Node::filter(uint8_t const *data) const {
-	uint8_t const *mac = data + 1;
+bool Ieee802154Radio_RADIO_TIMER0::Node::filter(uint8_t const *mac) const {
 	FilterFlags flags = this->filterFlags;
 
 	// ALL: all packets pass
@@ -307,71 +305,86 @@ bool Ieee802154Radio_RADIO_TIMER0_EGU0::Node::filter(uint8_t const *data) const 
 	return false;
 }
 
-bool Ieee802154Radio_RADIO_TIMER0_EGU0::Node::request(uint16_t panId, const uint8_t *destinationAddress, int addressLength) {
-	for (auto &buffer : this->requestBuffers) {
+bool Ieee802154Radio_RADIO_TIMER0::Node::request(uint16_t panId, const uint8_t *destinationAddress, int addressLength) {
+	// method is called only from interrupt handler, therefore no locking required
+	bool result = this->requestBuffers.remove([this, panId, destinationAddress, addressLength](Buffer &buffer) {
 		// check pan id
-		if (panId != (buffer.packet[4] | (buffer.packet[5] << 8)))
-			continue;
+		if (panId != (buffer.packet[MAX_HEADER_SIZE + 3] | (buffer.packet[MAX_HEADER_SIZE + 4] << 8)))
+			return false;
 
 		// frame control
-		auto frameControl = ieee::FrameControl(buffer.packet[1] | (buffer.packet[2] << 8))
+		auto frameControl = ieee::FrameControl(buffer.packet[MAX_HEADER_SIZE] | (buffer.packet[MAX_HEADER_SIZE + 1] << 8))
 			& (ieee::FrameControl::SEQUENCE_NUMBER_SUPPRESSION | ieee::FrameControl::DESTINATION_ADDRESSING_MASK);
 
 		// check destination addressing
 		if (addressLength == 2) {
 			if (frameControl != ieee::FrameControl::DESTINATION_ADDRESSING_SHORT)
-				continue;
+				return false;
 		} else {
 			if (frameControl != ieee::FrameControl::DESTINATION_ADDRESSING_LONG)
-				continue;
+				return false;
 		}
 
 		// check destination address
-		if (std::equal(destinationAddress, destinationAddress + addressLength, buffer.packet + 6)) {
-		//if (array::equals(addressLength, destinationAddress, buffer.packet + 6)) {
-			// clear AWAIT_DATA_REQUEST flag in byte behind the packet
-			//int length = buffer.packet[0] - 2;
-			//buffer.packet[1 + length] &= uint8_t(~SendFlags::AWAIT_DATA_REQUEST);
-			buffer.remove2();
-			this->radio.sendBuffers.add(buffer);
-			return true;
-		}
-	}
-	return false;
+		if (!std::equal(destinationAddress, destinationAddress + addressLength, buffer.packet + 6))
+			return false;
+
+		// move buffer to sendBuffers
+		this->device.sendBuffers.push(buffer);
+		return true;
+	});
+	return result;
 }
 
 
-// Ieee802154_RADIO_TIMER0_EGU0::Buffer
+// Buffer
 
-Ieee802154Radio_RADIO_TIMER0_EGU0::Buffer::Buffer(Node &node)
-	: BufferImpl(packet + 1, PACKET_LENGTH, node.radio.stat), node(node)
+Ieee802154Radio_RADIO_TIMER0::Buffer::Buffer(Node &node)
+	: BufferImpl(MAX_HEADER_SIZE, packet + MAX_HEADER_SIZE, MAX_PAYLOAD_SIZE, node.device.stat)
+	, node(node)
 {
 	node.buffers.add(*this);
 }
 
-Ieee802154Radio_RADIO_TIMER0_EGU0::Buffer::~Buffer() {
+Ieee802154Radio_RADIO_TIMER0::Buffer::~Buffer() {
 }
 
-void Ieee802154Radio_RADIO_TIMER0_EGU0::Buffer::cancel() {
-	if (this->stat != State::BUSY)
-		return;
+bool Ieee802154Radio_RADIO_TIMER0::Buffer::cancel() {
+	if (this->p.state != State::BUSY)
+		return false;
+	auto &node = this->node;
+	auto &device = node.device;
 
-	if (this != this->node.radio.sendBuffer) {
-		// cancel can take effect immediately
-		lock();
-		this->remove2();
-		unlock();
-		setReady(0);
-	} else {
-		// sending of this buffer is in progress: cancel has no effect
+	lock();
+	bool success = true;
+	switch (this->mode) {
+	case Mode::RECEIVE:
+		// remove from pending receive transfers
+		node.receiveBuffers.remove(*this);
+		break;
+	case Mode::REQUEST:
+		// remove from pending request buffers
+		node.requestBuffers.remove(*this);
+		break;
+	case Mode::SEND:
+		// remove from pending send transfers if not yet started, otherwise complete normally
+		success = device.sendBuffers.remove(*this, false);
+		break;
 	}
+	unlock();
+	if (success)
+		setReady(0);
+
+	return true;
 }
 
-bool Ieee802154Radio_RADIO_TIMER0_EGU0::Buffer::startInternal(int size, Op op) {
-	if (this->stat != State::READY) {
+bool Ieee802154Radio_RADIO_TIMER0::Buffer::start(Op op) {
+	if (this->p.state != State::READY) {
 		assert(this->stat != State::BUSY);
 		return false;
 	}
+	auto &node = this->node;
+	auto &device = node.device;
 
 	// check if READ or WRITE flag is set
 	assert((op & Op::READ_WRITE) != 0);
@@ -379,35 +392,34 @@ bool Ieee802154Radio_RADIO_TIMER0_EGU0::Buffer::startInternal(int size, Op op) {
 	lock();
 	if ((op & Op::WRITE) == 0) {
 		// receive
-		this->node.receiveBuffers.add(*this);
+		node.receiveBuffers.push(*this);
+		this->mode = Mode::RECEIVE;
 
-		this->node.radio.receiverEnabled = true;
+		//device.receiverEnabled = true;
 
 		// start receiver (base band decoder) if radio is in RxIdle state, otherwise do it on RXREADY
-		if (isRxIdle()) {
+		//if (isRxIdle()) {
 			// todo: maybe there is a race condition if the radio automatically switches to TXREADY after CCA here. maybe wait until CCA has ended
-			this->node.radio.startReceive(); // -> END
-		}
+		//	device.startReceive(); // -> END
+		//}
 	} else {
 		// send
-		this->xferred = size;
-		size -= SEND_EXTRA_LENGTH;
-		this->packet[0] = size + 2; // space for CRC
-		auto sendFlags = SendFlags(this->packet[1 + size]);
+		auto sendFlags = SendFlags(this->p.headerSize >= 1 ? this->packet[MAX_HEADER_SIZE - 1] : 0);
 		if (sendFlags == SendFlags::AWAIT_DATA_REQUEST) {
 			// need to wait for a data request from the receiver of this packet
-			this->node.requestBuffers.add(*this);
+			node.requestBuffers.push(*this);
+			this->mode = Mode::REQUEST;
 		} else {
 			// packet can be sent as soon as possible
-			this->node.radio.sendBuffers.add(*this);
+			device.sendBuffers.push(*this);
+			this->mode = Mode::SEND;
 
 			// check if we can start sending now
-			if (this->node.radio.sendState == SendState::IDLE) {
-				this->node.radio.prepareForSend(*this);
+			if (device.sendState == SendState::IDLE) {
+				device.prepareForSend(*this);
 			}
 		}
 	}
-	this->finished = false;
 	unlock();
 
 	// set state
@@ -416,88 +428,35 @@ bool Ieee802154Radio_RADIO_TIMER0_EGU0::Buffer::startInternal(int size, Op op) {
 	return true;
 }
 
-
-// Ieee802154Radio_RADIO_TIMER0_EGU0 protected:
-
-void Ieee802154Radio_RADIO_TIMER0_EGU0::handle() {
-	if (nvic::pending(SWI0_EGU0_IRQn)) {
-		// check energy detection
-		if (NRF_EGU0->EVENTS_TRIGGERED[0]) {
-			NRF_EGU0->EVENTS_TRIGGERED[0] = 0;
-			//Radio::onEdReady(NRF_RADIO->EDSAMPLE);
-		}
-
-		// check if a send operation has finished
-		if (NRF_EGU0->EVENTS_TRIGGERED[2]) {
-			NRF_EGU0->EVENTS_TRIGGERED[2] = 0;
-
-			// handle all finished send buffers
-			lock();
-			while (!this->sendBuffers.empty()) {
-				auto &buffer = *this->sendBuffers.begin();
-				if (!buffer.finished)
-					break;
-				buffer.remove2();
-				unlock();
-				buffer.setReady();
-				lock();
-			}
-			unlock();
-		}
-
-		// check if receive operation has finished
-		if (NRF_EGU0->EVENTS_TRIGGERED[1]) {
-			NRF_EGU0->EVENTS_TRIGGERED[1] = 0;
-
-			// handle all finished receive buffers
-			lock();
-			for (auto &channel : this->nodes) {
-				while (!channel.receiveBuffers.empty()) {
-					auto &buffer = *channel.receiveBuffers.begin();
-					if (!buffer.finished)
-						break;
-					buffer.remove2();
-					unlock();
-					buffer.setReady();
-					lock();
-				}
-			}
-			unlock();
-		}
-
-		// clear pending interrupt flag at NVIC
-		nvic::clear(SWI0_EGU0_IRQn);
-	}
+void Ieee802154Radio_RADIO_TIMER0::Buffer::handle() {
+	setReady();
 }
 
-void Ieee802154Radio_RADIO_TIMER0_EGU0::startReceive() {
+
+// Ieee802154Radio_RADIO_TIMER0 protected:
+
+void Ieee802154Radio_RADIO_TIMER0::startReceive() {
 	this->endAction = EndAction::RECEIVE;
 
-	NRF_RADIO->PACKETPTR = intptr_t(this->receivePacket);
-	NRF_RADIO->TASKS_START = TRIGGER; // -> END
+	NRF_RADIO->PACKETPTR = uintptr_t(this->receivePacket);
+	NRF_RADIO->TASKS_START = TRIGGER; // -> CRCOK or CRCERROR, END
 }
 
-void Ieee802154Radio_RADIO_TIMER0_EGU0::selectForSend() {
+void Ieee802154Radio_RADIO_TIMER0::selectForSend() {
 	// select next send buffer
-	for (auto &buffer : this->sendBuffers) {
-		if (!buffer.finished) {
-			prepareForSend(buffer);
-			break;
-		}
-	}
+	Buffer *buffer = this->sendBuffers.frontOrNull();
+	if (buffer != nullptr)
+		prepareForSend(*buffer);
 }
 
-void Ieee802154Radio_RADIO_TIMER0_EGU0::prepareForSend(Buffer &buffer) {
+void Ieee802154Radio_RADIO_TIMER0::prepareForSend(Buffer &buffer) {
 	auto flags = buffer.node.filterFlags;
 
 	// check if the packet requests an ACK
-	bool requestAck = (ieee::FrameControl(buffer.packet[1]) & ieee::FrameControl::ACKNOWLEDGE_REQUEST) != 0;
+	bool requestAck = (ieee::FrameControl(buffer.packet[MAX_HEADER_SIZE]) & ieee::FrameControl::ACKNOWLEDGE_REQUEST) != 0;
 
-	// check if the context is configured for handling ACK
+	// check if the node that owns the buffer is configured for handling ACK
 	bool handleAck = (flags & FilterFlags::HANDLE_ACK) != 0;
-
-	// set current send buffer
-	this->sendBuffer = &buffer;
 
 	// either wait until packet is sent or until ack was received
 	this->sendState = (requestAck && handleAck) ? SendState::AWAIT_SENT_ACK : SendState::AWAIT_SENT;
@@ -514,7 +473,7 @@ void Ieee802154Radio_RADIO_TIMER0_EGU0::prepareForSend(Buffer &buffer) {
 #endif
 }
 
-void Ieee802154Radio_RADIO_TIMER0_EGU0::startBackoff() {
+void Ieee802154Radio_RADIO_TIMER0::startBackoff() {
 	// initialize backoff parameters
 	this->backoffExponent = minBackoffExponent;
 	this->backoffCount = 0;
@@ -523,12 +482,11 @@ void Ieee802154Radio_RADIO_TIMER0_EGU0::startBackoff() {
 	backoff();
 }
 
-void Ieee802154Radio_RADIO_TIMER0_EGU0::backoff() {
+void Ieee802154Radio_RADIO_TIMER0::backoff() {
 	// fail when maximum backoff count is reached
 	if (this->backoffCount >= maxBackoffCount) {
-		this->sendBuffer->xferred = 0; // indicate failure
 //debug::set(debug::CYAN);
-		finishSend();
+		finishSend(false);
 
 		// check if more to send
 		selectForSend();
@@ -551,7 +509,7 @@ void Ieee802154Radio_RADIO_TIMER0_EGU0::backoff() {
 	NRF_TIMER0->INTENSET = N(TIMER_INTENSET_COMPARE3, Set); // -> COMPARE[3]
 }
 
-void Ieee802154Radio_RADIO_TIMER0_EGU0::startClearChannelAssessment() {
+void Ieee802154Radio_RADIO_TIMER0::startClearChannelAssessment() {
 	// shortcut: stop receiving and enable sender if channel is clear
 	NRF_RADIO->SHORTS = N(RADIO_SHORTS_CCAIDLE_STOP, Enabled)
 		| N(RADIO_SHORTS_CCAIDLE_TXEN, Enabled);
@@ -560,16 +518,26 @@ void Ieee802154Radio_RADIO_TIMER0_EGU0::startClearChannelAssessment() {
 	NRF_RADIO->TASKS_CCASTART = TRIGGER; // -> CCABUSY or CCAIDLE -> TXEN -> TXREADY
 }
 
-void Ieee802154Radio_RADIO_TIMER0_EGU0::startSend() {
+void Ieee802154Radio_RADIO_TIMER0::startSend() {
 	// handle sent packet on END event
 	this->endAction = EndAction::ON_SENT;
 
+	auto &buffer =  this->sendBuffers.front();
+	auto packet = buffer.packet + MAX_HEADER_SIZE - 1;
+	int length = buffer.p.size + 2; // set packet length including space for CRC
+
+	// set packet length
+	packet[0] = length;
+
+	// determine inter frame spacing duration
+	this->ifsDuration = length <= maxSifsLength ? minSifsDuration : minLifsDuration;
+
 	// start send operation
-	NRF_RADIO->PACKETPTR = intptr_t(this->sendBuffer->packet);
+	NRF_RADIO->PACKETPTR = uintptr_t(packet);
 	NRF_RADIO->TASKS_START = TRIGGER; // -> END
 }
 
-void Ieee802154Radio_RADIO_TIMER0_EGU0::startSendAck() {
+void Ieee802154Radio_RADIO_TIMER0::startSendAck() {
 	// don't do anything on END event
 	this->endAction = EndAction::NOP;
 
@@ -577,23 +545,19 @@ void Ieee802154Radio_RADIO_TIMER0_EGU0::startSendAck() {
 	NRF_RADIO->TASKS_START = TRIGGER; // -> END
 }
 
-void Ieee802154Radio_RADIO_TIMER0_EGU0::finishSend() {
-	this->sendBuffer->finished = true;
-	this->sendBuffer = nullptr;
+void Ieee802154Radio_RADIO_TIMER0::finishSend(bool success) {
+	this->sendBuffers.pop([this, success](Buffer &buffer) {
+		if (!success)
+			buffer.p.size = 0;
+		this->loop.push(buffer);
+		return true;
+	});
 
 	// sender is idle again
 	this->sendState = SendState::IDLE;
-
-	// signal to handle() that a send operation has finished
-	NRF_EGU0->TASKS_TRIGGER[2] = TRIGGER;
 }
 
-
-void RADIO_IRQHandler() {
-	Ieee802154Radio_RADIO_TIMER0_EGU0::instance->handleRadio();
-}
-
-void Ieee802154Radio_RADIO_TIMER0_EGU0::handleRadio() {
+void Ieee802154Radio_RADIO_TIMER0::RADIO_IRQHandler() {
 	// check if ready to receive (RxIdle state)
 	if (NRF_RADIO->EVENTS_RXREADY) {
 		NRF_RADIO->EVENTS_RXREADY = 0;
@@ -653,20 +617,21 @@ void Ieee802154Radio_RADIO_TIMER0_EGU0::handleRadio() {
 	if (NRF_RADIO->EVENTS_CRCOK) {
 		NRF_RADIO->EVENTS_CRCOK = 0;
 
-		// get length of payload data (subtract 2 for crc)
-		int length = this->receivePacket[0] - 2;
+		// get size of payload data (subtract 2 for crc)
+		int size = this->receivePacket[0] - 2;
+		const uint8_t *mac = this->receivePacket + 1; // skip length byte
 
 		// determine inter frame spacing duration
-		this->ifsDuration = length <= maxSifsLength ? minSifsDuration : minLifsDuration;
+		this->ifsDuration = size <= maxSifsLength ? minSifsDuration : minLifsDuration;
 
 		// frame control
-		auto frameControl = ieee::FrameControl(receivePacket[1] | (receivePacket[2] << 8));
+		auto frameControl = ieee::FrameControl(mac[0] | (mac[1] << 8));
 
 		// check if a previously sent packet awaits an ACK
 		if (this->sendState == SendState::AWAIT_ACK) {
-			// check if this is the ACK packet that we are waiting for (mac counter must match)
+			// check if this is the ACK packet that we are waiting for (is an ACK and mac counter must match)
 			auto frameType = frameControl & ieee::FrameControl::TYPE_MASK;
-			if (frameType == ieee::FrameControl::TYPE_ACK && receivePacket[3] == this->sendBuffer->packet[3]) {
+			if (frameType == ieee::FrameControl::TYPE_ACK && mac[2] == this->sendBuffers.front().packet[MAX_HEADER_SIZE + 2]) {
 				// disable interrupts of ACK wait and backoff
 				NRF_TIMER0->INTENCLR =
 					N(TIMER_INTENCLR_COMPARE1, Clear)
@@ -674,7 +639,7 @@ void Ieee802154Radio_RADIO_TIMER0_EGU0::handleRadio() {
 
 				// set state of sent packet to success, send state becomes idle
 //debug::set(debug::YELLOW);
-				finishSend();
+				finishSend(true);
 
 				// check if more to send
 				selectForSend();
@@ -682,100 +647,104 @@ void Ieee802154Radio_RADIO_TIMER0_EGU0::handleRadio() {
 		}
 
 		// capture timestamp of received packet (CC[1] is currently unused)
-		if (RECEIVE_EXTRA_LENGTH >= 5) {
+		uint32_t timestamp = 0;
+		if (RECEIVE_HEADER_SIZE >= 5) {
 			NRF_TIMER0->TASKS_CAPTURE[1] = TRIGGER;
-			uint32_t timestamp = NRF_TIMER0->CC[1];
-			uint8_t *ts = &this->receivePacket[1 + length + 1];
-			ts[0] = timestamp;
-			ts[1] = timestamp >> 8;
-			ts[2] = timestamp >> 16;
-			ts[3] = timestamp >> 24;
+			timestamp = NRF_TIMER0->CC[1];
 		}
 
 		// check if a node is interested in this packet and wants to handle ack
-		bool pass = false;
 		bool ack = false;
 		this->ackPacket[1] = uint8_t(ieee::FrameControl::TYPE_ACK);
-		bool receiverEnabled = false;
+		bool listening = false;
 		for (auto &node : this->nodes) {
 			// check if the node wants to receive the packet
-			if (node.filterFlags != FilterFlags::NONE && node.filter(this->receivePacket)) {
-				// find next receive buffer
-				for (auto &buffer : node.receiveBuffers) {
-					if (!buffer.finished) {
-						bool passThis = true;
+			if (node.filterFlags != FilterFlags::NONE && node.filter(mac)) {
+				bool passThis = true;
 
-						// check if this context handles ack and the packet requests an ack
-						if ((node.filterFlags & FilterFlags::HANDLE_ACK) != 0
-							&& (frameControl & ieee::FrameControl::ACKNOWLEDGE_REQUEST) != 0)
-						{
-							// we need to send an ack
-							ack = true;
+				// check if this node handles ack and the packet requests an ack
+				if ((node.filterFlags & FilterFlags::HANDLE_ACK) != 0
+					&& (frameControl & ieee::FrameControl::ACKNOWLEDGE_REQUEST) != 0)
+				{
+					// we need to send an ack
+					ack = true;
 
-							// check if this is a data request packet
-							if ((frameControl & (ieee::FrameControl::TYPE_MASK
-									| ieee::FrameControl::SECURITY
-									| ieee::FrameControl::PAN_ID_COMPRESSION
-									| ieee::FrameControl::SEQUENCE_NUMBER_SUPPRESSION
-									| ieee::FrameControl::DESTINATION_ADDRESSING_FLAG
-									| ieee::FrameControl::SOURCE_ADDRESSING_FLAG))
-								== (ieee::FrameControl::TYPE_COMMAND
-									| ieee::FrameControl::PAN_ID_COMPRESSION
-									| ieee::FrameControl::DESTINATION_ADDRESSING_FLAG
-									| ieee::FrameControl::SOURCE_ADDRESSING_FLAG))
-							{
-								// skip length, frameControl and macCounter
-								int i = 1 + 2 + 1;
+					// check if this is a data request packet
+					if ((frameControl & (ieee::FrameControl::TYPE_MASK
+							| ieee::FrameControl::SECURITY
+							| ieee::FrameControl::PAN_ID_COMPRESSION
+							| ieee::FrameControl::SEQUENCE_NUMBER_SUPPRESSION
+							| ieee::FrameControl::DESTINATION_ADDRESSING_FLAG
+							| ieee::FrameControl::SOURCE_ADDRESSING_FLAG))
+						== (ieee::FrameControl::TYPE_COMMAND
+							| ieee::FrameControl::PAN_ID_COMPRESSION
+							| ieee::FrameControl::DESTINATION_ADDRESSING_FLAG
+							| ieee::FrameControl::SOURCE_ADDRESSING_FLAG))
+					{
+						// frameControl and macCounter
+						int i = 2 + 1;
 
-								// pan id
-								uint16_t panId = this->receivePacket[i] | (this->receivePacket[i + 1] << 8);
-								i += 2;
+						// pan id
+						uint16_t panId = mac[i] | (mac[i + 1] << 8);
+						i += 2;
 
-								// skip destination address
-								if ((frameControl & ieee::FrameControl::DESTINATION_ADDRESSING_LONG_FLAG) != 0)
-									i += 8;
-								else
-									i += 2;
+						// skip destination address
+						if ((frameControl & ieee::FrameControl::DESTINATION_ADDRESSING_LONG_FLAG) != 0)
+							i += 8;
+						else
+							i += 2;
 
-								// source address
-								const uint8_t *sourceAddress = this->receivePacket + i;
-								int len = (frameControl & ieee::FrameControl::SOURCE_ADDRESSING_LONG_FLAG) == 0 ? 2 : 8;
+						// source address
+						const uint8_t *sourceAddress = mac + i;
+						int len = (frameControl & ieee::FrameControl::SOURCE_ADDRESSING_LONG_FLAG) == 0 ? 2 : 8;
 
-								// check if it is a data request command
-								if (this->receivePacket[i + len] == uint8_t(ieee::Command::DATA_REQUEST)) {
-									// check if there is a packet pending for this source and if yes, move to sendBuffers
-									if (node.request(panId, sourceAddress, len)) {
-										// set flag in ACK packet
-										this->ackPacket[1] = uint8_t(ieee::FrameControl::TYPE_ACK | ieee::FrameControl::FRAME_PENDING);
-									}
-
-									// don't pass data request packet to node
-									passThis = false;
-								}
+						// check if it is a data request command
+						if (mac[i + len] == uint8_t(ieee::Command::DATA_REQUEST)) {
+							// check if there is a packet pending for this source and if yes, move to sendBuffers
+							if (node.request(panId, sourceAddress, len)) {
+								// set frame pending flag in ACK packet
+								this->ackPacket[1] = uint8_t(ieee::FrameControl::TYPE_ACK | ieee::FrameControl::FRAME_PENDING);
 							}
+
+							// don't pass data request packet to node
+							passThis = false;
 						}
-						if (passThis) {
-							// assign received packet to buffer
-							//buffer.set(this->receivePacket + 1, length + RECEIVE_EXTRA_LENGTH);
-							int transferred = length + RECEIVE_EXTRA_LENGTH;
-							std::copy(this->receivePacket + 1, this->receivePacket + 1 + transferred, buffer.dat);
-							buffer.xferred = transferred;
-							buffer.finished = true;
-						}
-						pass |= passThis;
-						break;
 					}
 				}
-			}
+				if (passThis) {
+					node.receiveBuffers.pop([this, mac, timestamp, size](Buffer &buffer) {
+						// set header
+						{
+							auto h = buffer.packet + MAX_HEADER_SIZE - 1;
 
-			// check if at least one node is "listening"
-			if (!node.receiveBuffers.empty()) {
-				auto it = node.receiveBuffers.end();
-				--it;
-				receiverEnabled |= !it->finished;
+							// link quality indicator (LQI)
+							h[0] = mac[size];
+
+							// timestamp
+							if (RECEIVE_HEADER_SIZE >= 5) {
+								h -= 4;
+								h[0] = timestamp;
+								h[1] = timestamp >> 8;
+								h[2] = timestamp >> 16;
+								h[3] = timestamp >> 24;
+								buffer.p.headerSize = 5;
+							} else {
+								buffer.p.headerSize = 1;
+							}
+						}
+
+						// copy payload
+						buffer.p.size = size;
+						std::copy(mac, mac + size, buffer.packet + MAX_HEADER_SIZE);
+
+						this->loop.push(buffer);
+						return true;
+					});
+				}
 			}
+			listening |= !node.receiveBuffers.empty();
 		}
-		this->receiverEnabled = receiverEnabled;
+//		this->receiverEnabled = listening;
 
 		// check if we need to send an ACK
 		if (ack) {
@@ -787,12 +756,6 @@ void Ieee802154Radio_RADIO_TIMER0_EGU0::handleRadio() {
 
 			// send ACK on END event
 			this->endAction = EndAction::SEND_ACK;
-		}
-
-		// check if a context is interested in the packet
-		if (pass) {
-			// signal to handle() that a received packet is ready
-			NRF_EGU0->TASKS_TRIGGER[1] = TRIGGER;
 		}
 	}
 
@@ -823,7 +786,7 @@ void Ieee802154Radio_RADIO_TIMER0_EGU0::handleRadio() {
 		case EndAction::RECEIVE:
 			// continue receiving
 			if (this->receiverEnabled)
-				startReceive(); // -> END
+				startReceive(); // -> CRCOK or CRCERROR, END
 			break;
 		case EndAction::SEND_ACK:
 			// enable sender for sending ack
@@ -837,27 +800,24 @@ void Ieee802154Radio_RADIO_TIMER0_EGU0::handleRadio() {
 			// now wait for timeout
 			break;
 		case EndAction::ON_SENT:
-		{
-			// determine interframe spacing duration
-			uint8_t length = this->sendBuffer->packet[0];
-			this->ifsDuration = length <= maxSifsLength ? minSifsDuration : minLifsDuration;
+			// sent a packet, is either finished or we need to wait for ACK
+			{
+				// check if we have to wait for an ACK
+				if (this->sendState == SendState::AWAIT_SENT_ACK) {
+					// yes: set timer for ACK wait duration
+					NRF_TIMER0->CC[1] = NRF_TIMER0->CC[2] + ackWaitDuration;
+					NRF_TIMER0->EVENTS_COMPARE[1] = 0;
+					NRF_TIMER0->INTENSET = N(TIMER_INTENSET_COMPARE1, Set); // -> COMPARE[1]
 
-			// check if we have to wait for an ACK
-			if (this->sendState == SendState::AWAIT_SENT_ACK) {
-				// yes: set timer for ACK wait duration
-				NRF_TIMER0->CC[1] = NRF_TIMER0->CC[2] + ackWaitDuration;
-				NRF_TIMER0->EVENTS_COMPARE[1] = 0;
-				NRF_TIMER0->INTENSET = N(TIMER_INTENSET_COMPARE1, Set); // -> COMPARE[1]
-
-				// now we either receive an ACK packet or timeout
-				this->sendState = SendState::AWAIT_ACK;
-				this->receiverEnabled = true;
-			} else {
-				// no: set state of sent packet to success, send state becomes idle
-//debug::set(debug::BLUE);
-				finishSend();
+					// now we either receive an ACK packet or timeout
+					this->sendState = SendState::AWAIT_ACK;
+					//this->receiverEnabled = true;
+				} else {
+					// no: set state of sent packet to success, send state becomes idle
+	//debug::set(debug::BLUE);
+					finishSend(true);
+				}
 			}
-		}
 			break;
 		}
 	}
@@ -876,11 +836,7 @@ void Ieee802154Radio_RADIO_TIMER0_EGU0::handleRadio() {
 	}
 }
 
-void TIMER0_IRQHandler() {
-	Ieee802154Radio_RADIO_TIMER0_EGU0::instance->handleTimer();
-}
-
-void Ieee802154Radio_RADIO_TIMER0_EGU0::handleTimer() {
+void Ieee802154Radio_RADIO_TIMER0::TIMER0_IRQHandler() {
 	// read interrupt enable flags
 	uint32_t INTEN = NRF_TIMER0->INTENSET;
 
@@ -910,8 +866,7 @@ void Ieee802154Radio_RADIO_TIMER0_EGU0::handleTimer() {
 		} else {
 //debug::set(debug::RED);
 			// sent packet was not acknowledged: set result to failed, send state becomes idle
-			this->sendBuffer->xferred = 0; // indicate failure
-			finishSend();
+			finishSend(false);
 
 			// todo: disable receiver (and set this->receiverenabled = false) when no node listens
 
@@ -944,7 +899,5 @@ void Ieee802154Radio_RADIO_TIMER0_EGU0::handleTimer() {
 		}
 	}
 }
-
-Ieee802154Radio_RADIO_TIMER0_EGU0 *Ieee802154Radio_RADIO_TIMER0_EGU0::instance;
 
 } // namespace coco
