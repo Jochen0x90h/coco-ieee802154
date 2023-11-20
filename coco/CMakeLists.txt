@@ -20,7 +20,7 @@ elseif(${PLATFORM} MATCHES "^nrf52")
 		PUBLIC FILE_SET platform_headers TYPE HEADERS BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/nrf52 FILES
 			nrf52/coco/platform/Ieee802154Radio_RADIO_TIMER0.hpp
 		PRIVATE
-			nrf52/coco/platform/Ieee802154Radio_RADIO_TIMER0_EGU0.cpp
+			nrf52/coco/platform/Ieee802154Radio_RADIO_TIMER0.cpp
 	)
 endif()
 

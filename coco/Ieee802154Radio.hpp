@@ -72,31 +72,29 @@ public:
 	};
 
 	/**
-		Maximum payload length without leading length byte and trailing crc
+		Maximum payload size without leading length byte and trailing crc
 	*/
 	static constexpr int MAX_PAYLOAD_SIZE = 125;
 
 	/**
-		Receive header length: One byte for link quality indicator (LQI) and 4 bytes for timestamp
+		Size of receive header: One byte for link quality indicator (LQI) and 4 bytes for timestamp
 	*/
-	//static constexpr int RECEIVE_EXTRA_LENGTH = 1 + 4;
 	static constexpr int RECEIVE_HEADER_SIZE = 1 + 4;
 
 	/**
-		Send hader length: One byte for send flags or length
+		Size of send header: One byte for send flags or length
 	*/
-	//static constexpr int SEND_EXTRA_LENGTH = 1;
 	static constexpr int SEND_HEADER_SIZE = 1;
 
 	/**
-		Length of header for radio buffers
+		Maximum header size of radio buffers
 	*/
 	static constexpr int MAX_HEADER_SIZE = std::max(RECEIVE_HEADER_SIZE, SEND_HEADER_SIZE);
 
 	/**
-		Length of a packet including extra data
+		Size of radio buffer
 	*/
-	//static constexpr int PACKET_LENGTH = MAX_PAYLOAD_LENGTH + std::max(RECEIVE_EXTRA_LENGTH, SEND_EXTRA_LENGTH);
+	static constexpr int BUFFER_SIZE = MAX_HEADER_SIZE + MAX_PAYLOAD_SIZE;
 
 
 	virtual ~Ieee802154Radio();

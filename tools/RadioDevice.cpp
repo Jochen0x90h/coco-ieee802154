@@ -1,5 +1,6 @@
 #include <coco/debug.hpp>
 #include <coco/BufferReader.hpp>
+#include <coco/BufferWriter.hpp>
 #include <RadioDevice.hpp>
 
 
@@ -136,7 +137,7 @@ static_assert(NODE_COUNT * 2 <= std::size(configurationDescriptor.endpoints));
 
 
 // handle control requests
-Coroutine control(Loop &loop, UsbDevice &device, Buffer &buffer, Ieee802154Radio &radio, Drivers::Node *nodes) {
+Coroutine control(Loop &loop, UsbDevice &device, Buffer &buffer, Ieee802154Radio &radio, Drivers::RadioNode *nodes) {
 	while (true) {
 		usb::Setup setup;
 
@@ -182,7 +183,7 @@ Coroutine control(Loop &loop, UsbDevice &device, Buffer &buffer, Ieee802154Radio
 				{
 					// read uint32 and set as debug color
 					co_await buffer.read(setup.length);
-					if (setup.index >= 1 && setup.index <= NODE_COUNT && setup.length >= 14 && buffer.transferred() >= 14) {
+					if (setup.index >= 1 && setup.index <= NODE_COUNT && setup.length >= 14 && buffer.size() >= 14) {
 						BufferReader r(buffer);
 						auto pan = r.u16L();
 						auto longAddress = r.u64L();
@@ -206,7 +207,7 @@ Coroutine control(Loop &loop, UsbDevice &device, Buffer &buffer, Ieee802154Radio
 Barrier<> barriers[NODE_COUNT][256];
 
 // receive from radio and send to usb host
-Coroutine receive(Drivers::Node &node, Drivers::Endpoint &endpoint) {
+Coroutine receive(Drivers::RadioNode &node, Drivers::UsbEndpoint &endpoint) {
 	Drivers::RadioBuffer radioBuffer(node);
 	Drivers::UsbBuffer usbBuffer(endpoint);
 	while (true) {
@@ -215,29 +216,65 @@ Coroutine receive(Drivers::Node &node, Drivers::Endpoint &endpoint) {
 		while (radioBuffer.ready() && usbBuffer.ready()) {
 
 			// receive from radio
-			co_await radioBuffer.read();
-			int transferred = radioBuffer.transferred();
+			co_await radioBuffer.read(radioBuffer.capacity());
+			int transferred = radioBuffer.size();
 
-			// check if packet has minimum length (2 bytes frame control and extra data)
-			if (transferred >= 2 + Ieee802154Radio::RECEIVE_EXTRA_LENGTH) {
+			// check if packet has minimum length of 2 bytes for frame control
+			if (transferred >= 2) {// + Ieee802154Radio::RECEIVE_EXTRA_LENGTH) {
 				// send to usb host
-				co_await usbBuffer.writeData(radioBuffer.data(), transferred); // IN
+				BufferWriter w(usbBuffer);
+				w.u8(radioBuffer.headerSize());
+				w.header(radioBuffer);
+				w.data(radioBuffer);
+
+				//co_await usbBuffer.writeData(radioBuffer.data(), transferred); // IN
+				co_await usbBuffer.write(w); // IN
 			}
 		}
 	}
 }
 
 // receive from usb host and send to radio
-Coroutine send(Drivers::Node &node, Drivers::Endpoint &endpoint, int index) {
+Coroutine send(Drivers::Radio::Node &node, Drivers::UsbEndpoint &endpoint, int index) {
 	Drivers::RadioBuffer radioBuffer(node);
 	Drivers::UsbBuffer usbBuffer(endpoint);
 	while (true) {
+		co_await radioBuffer.untilReady();
 		co_await usbBuffer.untilReady();
-		while (usbBuffer.ready()) {
+		while (radioBuffer.ready() && usbBuffer.ready()) {
 			// receive from usb host
-			co_await usbBuffer.read(); // OUT
-			int transferred = usbBuffer.transferred();
+			co_await usbBuffer.read(usbBuffer.capacity()); // OUT
+			int transferred = usbBuffer.size();
 
+			int headerSize = usbBuffer[0];
+			int size = transferred - 1 - headerSize;
+
+			if (headerSize == 1 && size == 0) {
+				// cancel by mac counter
+				uint8_t macCounter = usbBuffer[1];
+				barriers[index][macCounter].doAll();
+			} else if (size >= 2) {
+				debug::setRed(true);
+
+				// get mac counter to identify the packet
+				uint8_t macCounter = usbBuffer[headerSize + 2];
+
+				// set header
+				radioBuffer.setHeader(usbBuffer.data() + 1, headerSize);
+
+				// send over the air
+				int r = co_await select(radioBuffer.writeData(usbBuffer.data() + 1 + headerSize, size), barriers[index][macCounter].wait());
+
+				if (r == 1) {
+					// send mac counter and number of transferred bytes back to usb host
+					usbBuffer[0] = 2; // header size
+					usbBuffer[1] = macCounter;
+					usbBuffer[2] = radioBuffer.size();
+					co_await usbBuffer.write(3); // IN
+				}
+				debug::setRed(false);
+			}
+/*
 			if (transferred == 1) {
 				// cancel by mac counter
 				uint8_t macCounter = usbBuffer[0];
@@ -258,7 +295,7 @@ Coroutine send(Drivers::Node &node, Drivers::Endpoint &endpoint, int index) {
 					co_await usbBuffer.write(2); // IN
 				}
 				debug::setRed(false);
-			}
+			}*/
 		}
 	}
 }
@@ -266,7 +303,7 @@ Coroutine send(Drivers::Node &node, Drivers::Endpoint &endpoint, int index) {
 Drivers drivers;
 
 int main(void) {
-	debug::init();
+	//debug::init();
 
 	// handle control transfers from usb host
 	control(drivers.loop, drivers.device, drivers.controlBuffer, drivers.radio, drivers.nodes);

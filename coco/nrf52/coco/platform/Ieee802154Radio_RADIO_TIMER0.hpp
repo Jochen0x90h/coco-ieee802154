@@ -97,7 +97,7 @@ public:
 		Buffer for transferring data over RADIO.
 		Derives from IntrusiveListNode for the list of buffers and Loop_TIM2::Handler2 to be notified from the event loop
 	*/
-	class Buffer : public BufferImpl, public IntrusiveListNode, public Loop_RTC0::Handler2 {// public IntrusiveListNode2 {
+	class Buffer : public BufferImpl, public IntrusiveListNode, public Loop_RTC0::Handler2 {
 		friend class Ieee802154Radio_RADIO_TIMER0;
 	public:
 		Buffer(Node &node);
@@ -113,7 +113,7 @@ public:
 		Node &node;
 
 		// first byte contains the length of the payload plus 2 for crc
-		uint8_t packet[MAX_HEADER_SIZE + MAX_PAYLOAD_SIZE];
+		uint8_t packet[BUFFER_SIZE];
 
 		enum class Mode {
 			// is in node.receiveTransfers

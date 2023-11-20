@@ -6,7 +6,7 @@
 
 using namespace coco;
 
-// drivers for SpiTest
+// drivers for RadioReceiveTest
 struct Drivers {
 	Loop_RTC0 loop;
 

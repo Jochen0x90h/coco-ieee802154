@@ -77,7 +77,7 @@ Coroutine receive(Loop &loop, Buffer &radioBuffer) {
 	while (true) {
 		co_await radioBuffer.untilReady();
 		while (radioBuffer.ready()) {
-			co_await radioBuffer.read();
+			co_await radioBuffer.read(radioBuffer.capacity());
 		}
 	}
 }

@@ -62,10 +62,10 @@ public:
 		Buffer(Node &node, coco::Buffer &buffer);
 		~Buffer() override;
 
+		bool start(Op op) override;
 		bool cancel() override;
 
 	protected:
-		bool startInternal(int size, Op op) override;
 		Coroutine listen();
 
 		Node &node;

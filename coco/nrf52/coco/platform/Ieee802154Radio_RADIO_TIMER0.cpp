@@ -647,10 +647,8 @@ void Ieee802154Radio_RADIO_TIMER0::RADIO_IRQHandler() {
 		}
 
 		// capture timestamp of received packet (CC[1] is currently unused)
-		uint32_t timestamp = 0;
 		if (RECEIVE_HEADER_SIZE >= 5) {
 			NRF_TIMER0->TASKS_CAPTURE[1] = TRIGGER;
-			timestamp = NRF_TIMER0->CC[1];
 		}
 
 		// check if a node is interested in this packet and wants to handle ack
@@ -712,7 +710,7 @@ void Ieee802154Radio_RADIO_TIMER0::RADIO_IRQHandler() {
 					}
 				}
 				if (passThis) {
-					node.receiveBuffers.pop([this, mac, timestamp, size](Buffer &buffer) {
+					node.receiveBuffers.pop([this, mac, size](Buffer &buffer) {
 						// set header
 						{
 							auto h = buffer.packet + MAX_HEADER_SIZE - 1;
@@ -723,6 +721,7 @@ void Ieee802154Radio_RADIO_TIMER0::RADIO_IRQHandler() {
 							// timestamp
 							if (RECEIVE_HEADER_SIZE >= 5) {
 								h -= 4;
+								uint32_t timestamp = NRF_TIMER0->CC[1];
 								h[0] = timestamp;
 								h[1] = timestamp >> 8;
 								h[2] = timestamp >> 16;

@@ -2,7 +2,7 @@
 
 #include <coco/platform/Loop_RTC0.hpp>
 #include <coco/platform/UsbDevice_USBD.hpp>
-#include <coco/platform/Ieee802154Radio_RADIO_TIMER0_EGU0.hpp>
+#include <coco/platform/Ieee802154Radio_RADIO_TIMER0.hpp>
 
 
 using namespace coco;
@@ -14,15 +14,17 @@ struct Drivers {
 	Loop_RTC0 loop;
 
 	// radio
-	using Node = Ieee802154Radio_RADIO_TIMER0_EGU0::Node;
-	using RadioBuffer = Ieee802154Radio_RADIO_TIMER0_EGU0::Buffer;
-	Ieee802154Radio_RADIO_TIMER0_EGU0 radio{loop};
-	Node nodes[NODE_COUNT] = {{radio}, {radio}, {radio}, {radio}};
+	using Radio = Ieee802154Radio_RADIO_TIMER0;
+	using RadioNode = Radio::Node;
+	using RadioBuffer = Radio::Buffer;
+	Radio radio{loop};
+	RadioNode nodes[NODE_COUNT] = {{radio}, {radio}, {radio}, {radio}};
 
 	// usb
-	using Endpoint = UsbDevice_USBD::BulkEndpoint;
-	using UsbBuffer = UsbDevice_USBD::BulkBuffer<Ieee802154Radio::PACKET_LENGTH + 1>;
-	UsbDevice_USBD device{loop};
-	UsbDevice_USBD::ControlBuffer<256> controlBuffer{device};
-	Endpoint endpoints[NODE_COUNT] = {{device, 1}, {device, 2}, {device, 3}, {device, 4}};
+	using UsbDevice = UsbDevice_USBD;
+	using UsbEndpoint = UsbDevice::BulkEndpoint;
+	using UsbBuffer = UsbDevice::BulkBuffer<1 + Radio::BUFFER_SIZE + 1>;
+	UsbDevice device{loop};
+	UsbDevice::ControlBuffer<256> controlBuffer{device};
+	UsbEndpoint endpoints[NODE_COUNT] = {{device, 1}, {device, 2}, {device, 3}, {device, 4}};
 };
