@@ -28,3 +28,17 @@ struct Drivers {
 	UsbDevice::ControlBuffer<256> controlBuffer{device};
 	UsbEndpoint endpoints[NODE_COUNT] = {{device, 1}, {device, 2}, {device, 3}, {device, 4}};
 };
+
+Drivers drivers;
+
+extern "C" {
+void RADIO_IRQHandler() {
+	drivers.radio.RADIO_IRQHandler();
+}
+void TIMER0_IRQHandler() {
+	drivers.radio.TIMER0_IRQHandler();
+}
+void USBD_IRQHandler() {
+	drivers.device.USBD_IRQHandler();
+}
+}

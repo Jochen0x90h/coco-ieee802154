@@ -12,8 +12,8 @@ namespace ieee = ieee802154;
 
 // Ieee802154Radio_usb
 
-Ieee802154Radio_usb::Ieee802154Radio_usb(coco::Buffer &controlBuffer)
-	: controlBuffer(controlBuffer)
+Ieee802154Radio_usb::Ieee802154Radio_usb(coco::Buffer &controlBuffer, int headerSize)
+	: controlBuffer(controlBuffer), headerSize(headerSize)
 {
 	control();
 }
@@ -31,7 +31,7 @@ void Ieee802154Radio_usb::start(int channel) {
 
 void Ieee802154Radio_usb::stop() {
 	this->startStopFlag = true;
-	this->channel = -1;
+	this->channel = 0;
 	this->controlBarrier.doFirst();
 }
 
@@ -39,6 +39,10 @@ Coroutine Ieee802154Radio_usb::control() {
 	while (true) {
 		auto &buffer = this->controlBuffer;
 		co_await buffer.untilReady();
+
+		buffer.setHeader<usb::Setup>({usb::RequestType::VENDOR_DEVICE_OUT, uint8_t(Request::SET_HEADER_SIZE), this->headerSize, 0, 0});
+		co_await buffer.write(0);
+
 		while (buffer.ready()) {
 			// check if at least one flag is set
 			bool flag = this->startStopFlag;
@@ -54,8 +58,8 @@ Coroutine Ieee802154Radio_usb::control() {
 			if (this->startStopFlag) {
 				// start/stop
 				this->startStopFlag = false;
-				auto request = this->channel >= 0 ? Request::START : Request::STOP;
-				buffer.setHeader<usb::Setup>({usb::RequestType::VENDOR_DEVICE_OUT, uint8_t(request), uint16_t(this->channel), 0, 0});
+				auto request = this->channel != 0 ? Request::START : Request::STOP;
+				buffer.setHeader<usb::Setup>({usb::RequestType::VENDOR_DEVICE_OUT, uint8_t(request), this->channel, 0, 0});
 				size = 0;
 			} else {
 				// configure one node
@@ -83,29 +87,29 @@ Coroutine Ieee802154Radio_usb::control() {
 
 // Node
 
-Ieee802154Radio_usb::Node::Node(Ieee802154Radio_usb &radio, BufferDevice &device)
-	: radio(radio), device(device)
+Ieee802154Radio_usb::Node::Node(Ieee802154Radio_usb &device, BufferDevice &wrappedDevice)
+	: device(device), wrappedDevice(wrappedDevice)
 {
-	radio.nodes.add(*this);
+	device.nodes.add(*this);
 }
 
 Ieee802154Radio_usb::Node::~Node() {
 }
 
 Device::State Ieee802154Radio_usb::Node::state() {
-	return this->device.state();
+	return this->wrappedDevice.state();
 }
 
 Awaitable<> Ieee802154Radio_usb::Node::stateChange(int waitFlags) {
-	return this->device.stateChange(waitFlags);
+	return this->wrappedDevice.stateChange(waitFlags);
 }
 
 int Ieee802154Radio_usb::Node::getBufferCount() {
-	return this->device.getBufferCount();
+	return this->wrappedDevice.getBufferCount();
 }
 
 Buffer &Ieee802154Radio_usb::Node::getBuffer(int index) {
-	return this->device.getBuffer(index);
+	return this->wrappedDevice.getBuffer(index);
 }
 
 void Ieee802154Radio_usb::Node::configure(uint16_t pan, uint64_t longAddress,
@@ -117,14 +121,15 @@ void Ieee802154Radio_usb::Node::configure(uint16_t pan, uint64_t longAddress,
 	this->filterFlags = filterFlags;
 
 	this->configureFlag = true;
-	this->radio.controlBarrier.doFirst();
+	this->device.controlBarrier.doFirst();
 }
 
 
 // Buffer
 
-Ieee802154Radio_usb::Buffer::Buffer(Node &node, coco::Buffer &buffer)
-	: BufferImpl(MAX_HEADER_SIZE, buffer.data() + 1 + MAX_HEADER_SIZE, buffer.capacity() - 1 - MAX_HEADER_SIZE, buffer.state()), node(node), buffer(buffer)
+Ieee802154Radio_usb::Buffer::Buffer(Node &node, coco::Buffer &wrappedBuffer)
+	: BufferImpl(node.device.headerSize, wrappedBuffer.data() + node.device.headerSize, wrappedBuffer.capacity() - node.device.headerSize, wrappedBuffer.state())
+	, node(node), wrappedBuffer(wrappedBuffer)
 {
 	listen();
 }
@@ -144,79 +149,99 @@ bool Ieee802154Radio_usb::Buffer::start(Op op) {
 	this->op = op;
 	if ((op & Op::WRITE) == 0) {
 		// read
-		//this->xferred = size;
 	} else {
 		// write
-
-		// move data
+		int headerCapacity = this->p.headerCapacity;
 		int headerSize = this->p.headerSize;
-		int size = this->p.size;
-		uint8_t *d = this->buffer.data();
-		d[0] = headerSize;
-		uint8_t *src = headerData();
-		uint8_t *dst = d + 1;
-		std::memmove(dst, src, headerSize + size);
-		this->buffer.resize(size);
+		auto data = this->wrappedBuffer.data();
+		std::fill(data, data + headerCapacity - headerSize, 0);
+		this->wrappedBuffer.resize(headerCapacity + this->p.size);
 
 		// add to list until we receive the result of the send operation
 		this->node.sendBuffers.add(*this);
 	}
-	bool result = this->buffer.start(op);
-	//if (result && this->stat == Buffer::State::READY)
-	//	setBusy();
+	bool result = this->wrappedBuffer.start(op);
+
+	// in case setReady() was called from listen(), the state change is missed when the app call start() again
+	if (result && this->p.state == Buffer::State::READY)
+		setBusy();
+
 	return result;
 }
 
 bool Ieee802154Radio_usb::Buffer::cancel() {
-	// todo: cancel by mac counter
-	return this->buffer.cancel();
+	if (this->p.state != State::BUSY)
+		return false;
+
+	// check if already cancelled
+	if ((this->op & Op::ERASE) != 0)
+		return true;
+
+	// use ERASE flag as cancel indicator
+	this->op |= Op::ERASE;
+	if (!this->wrappedBuffer.cancel() && (this->op & Op::WRITE) != 0) {
+		// cancel write by mac counter
+		int headerSize = this->p.headerCapacity;
+		uint8_t macCounter = this->wrappedBuffer[headerSize + 2];
+		this->wrappedBuffer[0] = macCounter;
+		this->wrappedBuffer.startWrite(1);
+	}
+
+	return true;
 }
 
 Coroutine Ieee802154Radio_usb::Buffer::listen() {
 	while (true) {
 		// wait for state change
-		co_await this->buffer.stateChange();
+		co_await this->wrappedBuffer.stateChange();
 
-		auto state = this->buffer.state();
+		auto state = this->wrappedBuffer.state();
 		if (state == Buffer::State::READY) {
 			// buffer became ready
-			int transferred = this->buffer.size();
+			int transferred = this->wrappedBuffer.size();
+			int headerSize = this->p.headerCapacity;
 
-			if ((this->op & Op::WRITE) == 0) {
-				// read
-				int headerSize = this->buffer[0];
-				int size = transferred - 1 - headerSize;
-				if (headerSize >= 2 && size == 0) {
-					// received mac counter and result of a sent packet
-					auto h = this->p.data + 1 + headerSize - 2;
-					uint8_t macCounter = h[0];
-					uint8_t radioTransferred = h[1];
-					for (auto &buffer : this->node.sendBuffers) {
-						int hs = buffer[0];
-						if (buffer[1 + hs + 2] == macCounter) {
-							buffer.remove2();
-							buffer.setReady(radioTransferred);
-							break;
+			if ((this->op & Op::ERASE) != 0) {
+				// cancelled
+				if ((this->op & Op::WRITE) != 0) {
+					// cancel write by mac counter
+					uint8_t macCounter = this->wrappedBuffer[headerSize + 2];
+					this->wrappedBuffer[0] = macCounter;
+					this->wrappedBuffer.startWrite(1);
+
+					// clear write flag so that cancel finishes when buffer becomes ready
+					this->op = Op::ERASE;
+				} else {
+					// cancel operation has finished
+					setReady(0);
+				}
+			} else if ((this->op & Op::WRITE) == 0) {
+				// received data from the radio
+				if (transferred <= headerSize + 2) {
+					// data too small for a packet
+					if (transferred == 2) {
+						// received the result of a sent packet
+						auto d = this->wrappedBuffer.data();
+						uint8_t macCounter = d[0];
+						uint8_t radioTransferred = d[1];
+						for (auto &buffer : this->node.sendBuffers) {
+							int hs = buffer[0];
+							if (buffer[2] == macCounter) {
+								buffer.remove2();
+								buffer.setReady(radioTransferred);
+								break;
+							}
 						}
 					}
 
 					// re-start read operation
-					//this->buffer.start(this->xferred, Op::READ);
-					this->buffer.startRead(this->p.size);
+					this->wrappedBuffer.start(this->op);
 				} else {
 					// received a packet
-
-					// move data
-					int hs = std::min(headerSize, 1 + MAX_HEADER_SIZE);
-					int s = std::min(size, int(this->p.capacity));
-					uint8_t *src = this->buffer.data() + 1 + headerSize - hs;
-					uint8_t *dst = this->p.data - hs;
-					std::memmove(dst, src, hs + s);
-
-					setReady(s);
+					setReady(transferred - headerSize);
 				}
 			} else {
-				// write: do nothing yet and wait for result
+				// write: do nothing and wait for result
 			}
 		} else {
 			setState(state);

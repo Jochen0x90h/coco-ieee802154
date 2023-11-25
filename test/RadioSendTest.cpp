@@ -32,6 +32,9 @@ Coroutine send(Loop &loop, Buffer &radioBuffer) {
 			co_await loop.sleep(1s);
 
 			// send packet over the air
+#ifdef NATIVE
+			std::cout << "Send packet" << std::endl;
+#endif
 			co_await radioBuffer.writeArray(packet);
 			int transferred = radioBuffer.size();
 

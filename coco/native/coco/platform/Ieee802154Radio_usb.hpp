@@ -13,7 +13,7 @@ class Ieee802154Radio_usb : public Ieee802154Radio {
 public:
 	class Buffer;
 
-	Ieee802154Radio_usb(coco::Buffer &controlBuffer);
+	Ieee802154Radio_usb(coco::Buffer &controlBuffer, int headerSize = 1);
 	~Ieee802154Radio_usb() override;
 
 	void start(int channel) override;
@@ -29,7 +29,7 @@ public:
 		friend class Ieee802154Radio_usb;
 		friend class Buffer;
 	public:
-		Node(Ieee802154Radio_usb &radio, BufferDevice &device);
+		Node(Ieee802154Radio_usb &device, BufferDevice &wrappedDevice);
 		~Node() override;
 
 		State state() override;
@@ -40,8 +40,8 @@ public:
 		void configure(uint16_t pan, uint64_t longAddress, uint16_t shortAddress, FilterFlags filterFlags) override;
 
 	protected:
-		Ieee802154Radio_usb &radio;
-		BufferDevice &device;
+		Ieee802154Radio_usb &device;
+		BufferDevice &wrappedDevice;
 
 		uint64_t longAddress;
 		uint16_t pan;
@@ -59,7 +59,7 @@ public:
 	class Buffer : public BufferImpl, public IntrusiveListNode2 {
 		friend class Node;
 	public:
-		Buffer(Node &node, coco::Buffer &buffer);
+		Buffer(Node &node, coco::Buffer &wrappedBuffer);
 		~Buffer() override;
 
 		bool start(Op op) override;
@@ -69,7 +69,7 @@ public:
 		Coroutine listen();
 
 		Node &node;
-		coco::Buffer &buffer;
+		coco::Buffer &wrappedBuffer;
 
 		Op op = Op::READ;
 	};
@@ -81,8 +81,9 @@ protected:
 	coco::Buffer &controlBuffer;
 	Barrier<> controlBarrier;
 
+	uint16_t headerSize;
+	uint16_t channel;
 	bool startStopFlag = false;
-	int channel;
 
 	IntrusiveList<Node> nodes;
 };

@@ -743,7 +743,7 @@ void Ieee802154Radio_RADIO_TIMER0::RADIO_IRQHandler() {
 			}
 			listening |= !node.receiveBuffers.empty();
 		}
-//		this->receiverEnabled = listening;
+		//this->receiverEnabled = listening;
 
 		// check if we need to send an ACK
 		if (ack) {

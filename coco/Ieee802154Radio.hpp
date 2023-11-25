@@ -64,11 +64,19 @@ public:
 
 	/// enum for remote controlling the radio, e.g. via usb
 	enum class Request : uint8_t {
-		// global
-		RESET = 0,
+		//RESET = 0,
+
+		// start radio
 		START = 1,
+
+		// stop radio
 		STOP = 2,
-		CONFIGURE = 3
+
+		// configure a virtual node
+		CONFIGURE = 3,
+
+		// set header size for data transfers
+		SET_HEADER_SIZE = 4,
 	};
 
 	/**
