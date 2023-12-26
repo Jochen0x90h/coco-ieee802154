@@ -73,10 +73,7 @@ public:
 		STOP = 2,
 
 		// configure a virtual node
-		CONFIGURE = 3,
-
-		// set header size for data transfers
-		SET_HEADER_SIZE = 4,
+		CONFIGURE = 3
 	};
 
 	/**

@@ -29,7 +29,9 @@ Coroutine send(Loop &loop, Buffer &radioBuffer) {
 #endif
 		co_await radioBuffer.untilReady();
 		while (radioBuffer.ready()) {
-			co_await loop.sleep(1s);
+			co_await loop.sleep(900ms);
+			debug::set(debug::BLACK);
+			co_await loop.sleep(100ms);
 
 			// send packet over the air
 #ifdef NATIVE
@@ -40,8 +42,7 @@ Coroutine send(Loop &loop, Buffer &radioBuffer) {
 
 			// check for success
 			bool success = transferred > 0;
-			debug::setRed(!success);
-			debug::setGreen(success);
+			debug::set(success ? debug::GREEN : debug::RED);
 
 			// increment mac counter
 			packet[2]++;
@@ -63,7 +64,7 @@ Coroutine reply(Loop &loop, Buffer &radioBuffer) {
 		while (radioBuffer.ready()) {
 			// wait for receive packet
 			debug::setBlue(true);
-			co_await radioBuffer.read(radioBuffer.capacity());
+			co_await radioBuffer.read();
 			debug::setBlue(false);
 
 			// reply
@@ -74,13 +75,13 @@ Coroutine reply(Loop &loop, Buffer &radioBuffer) {
 	}
 }
 
-// for native, we also need to receive to get the results of the send operations
+// for native, we also need to receive to get the results of the send operations. This is a limitation of the USB wrapper
 #ifdef NATIVE
 Coroutine receive(Loop &loop, Buffer &radioBuffer) {
 	while (true) {
 		co_await radioBuffer.untilReady();
 		while (radioBuffer.ready()) {
-			co_await radioBuffer.read(radioBuffer.capacity());
+			co_await radioBuffer.read();
 		}
 	}
 }

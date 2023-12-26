@@ -308,12 +308,14 @@ bool Ieee802154Radio_RADIO_TIMER0::Node::filter(uint8_t const *mac) const {
 bool Ieee802154Radio_RADIO_TIMER0::Node::request(uint16_t panId, const uint8_t *destinationAddress, int addressLength) {
 	// method is called only from interrupt handler, therefore no locking required
 	bool result = this->requestBuffers.remove([this, panId, destinationAddress, addressLength](Buffer &buffer) {
+		auto mac = buffer.data + buffer.p.headerSize;
+
 		// check pan id
-		if (panId != (buffer.packet[MAX_HEADER_SIZE + 3] | (buffer.packet[MAX_HEADER_SIZE + 4] << 8)))
+		if (panId != (mac[3] | (mac[4] << 8)))
 			return false;
 
 		// frame control
-		auto frameControl = ieee::FrameControl(buffer.packet[MAX_HEADER_SIZE] | (buffer.packet[MAX_HEADER_SIZE + 1] << 8))
+		auto frameControl = ieee::FrameControl(mac[0] | (mac[1] << 8))
 			& (ieee::FrameControl::SEQUENCE_NUMBER_SUPPRESSION | ieee::FrameControl::DESTINATION_ADDRESSING_MASK);
 
 		// check destination addressing
@@ -326,7 +328,7 @@ bool Ieee802154Radio_RADIO_TIMER0::Node::request(uint16_t panId, const uint8_t *
 		}
 
 		// check destination address
-		if (!std::equal(destinationAddress, destinationAddress + addressLength, buffer.packet + 6))
+		if (!std::equal(destinationAddress, destinationAddress + addressLength, mac + 5))
 			return false;
 
 		// move buffer to sendBuffers
@@ -340,7 +342,7 @@ bool Ieee802154Radio_RADIO_TIMER0::Node::request(uint16_t panId, const uint8_t *
 // Buffer
 
 Ieee802154Radio_RADIO_TIMER0::Buffer::Buffer(Node &node)
-	: BufferImpl(MAX_HEADER_SIZE, packet + MAX_HEADER_SIZE, MAX_PAYLOAD_SIZE, node.device.stat)
+	: BufferImpl(data, BUFFER_SIZE, node.device.stat)
 	, node(node)
 {
 	node.buffers.add(*this);
@@ -404,7 +406,7 @@ bool Ieee802154Radio_RADIO_TIMER0::Buffer::start(Op op) {
 		//}
 	} else {
 		// send
-		auto sendFlags = SendFlags(this->p.headerSize >= 1 ? this->packet[MAX_HEADER_SIZE - 1] : 0);
+		auto sendFlags = SendFlags(this->p.headerSize >= 1 ? this->data[0] : 0);
 		if (sendFlags == SendFlags::AWAIT_DATA_REQUEST) {
 			// need to wait for a data request from the receiver of this packet
 			node.requestBuffers.push(*this);
@@ -450,12 +452,12 @@ void Ieee802154Radio_RADIO_TIMER0::selectForSend() {
 }
 
 void Ieee802154Radio_RADIO_TIMER0::prepareForSend(Buffer &buffer) {
-	auto flags = buffer.node.filterFlags;
-
 	// check if the packet requests an ACK
-	bool requestAck = (ieee::FrameControl(buffer.packet[MAX_HEADER_SIZE]) & ieee::FrameControl::ACKNOWLEDGE_REQUEST) != 0;
+	auto mac = buffer.data + buffer.p.headerSize;
+	bool requestAck = (ieee::FrameControl(mac[0]) & ieee::FrameControl::ACKNOWLEDGE_REQUEST) != 0;
 
 	// check if the node that owns the buffer is configured for handling ACK
+	auto flags = buffer.node.filterFlags;
 	bool handleAck = (flags & FilterFlags::HANDLE_ACK) != 0;
 
 	// either wait until packet is sent or until ack was received
@@ -523,10 +525,10 @@ void Ieee802154Radio_RADIO_TIMER0::startSend() {
 	this->endAction = EndAction::ON_SENT;
 
 	auto &buffer =  this->sendBuffers.front();
-	auto packet = buffer.packet + MAX_HEADER_SIZE - 1;
-	int length = buffer.p.size + 2; // set packet length including space for CRC
+	auto packet = buffer.data + buffer.p.headerSize - 1; // packet starts one byte before actual payload
+	int length = buffer.p.size - buffer.p.headerSize + 2; // set packet length including space for CRC
 
-	// set packet length
+	// set packet length before payload
 	packet[0] = length;
 
 	// determine inter frame spacing duration
@@ -548,7 +550,7 @@ void Ieee802154Radio_RADIO_TIMER0::startSendAck() {
 void Ieee802154Radio_RADIO_TIMER0::finishSend(bool success) {
 	this->sendBuffers.pop([this, success](Buffer &buffer) {
 		if (!success)
-			buffer.p.size = 0;
+			buffer.p.size = buffer.p.headerSize;
 		this->loop.push(buffer);
 		return true;
 	});
@@ -624,25 +626,29 @@ void Ieee802154Radio_RADIO_TIMER0::RADIO_IRQHandler() {
 		// determine inter frame spacing duration
 		this->ifsDuration = size <= maxSifsLength ? minSifsDuration : minLifsDuration;
 
-		// frame control
+		// get frame control
 		auto frameControl = ieee::FrameControl(mac[0] | (mac[1] << 8));
 
 		// check if a previously sent packet awaits an ACK
 		if (this->sendState == SendState::AWAIT_ACK) {
-			// check if this is the ACK packet that we are waiting for (is an ACK and mac counter must match)
+			// check if this is the ACK packet that we are waiting for
 			auto frameType = frameControl & ieee::FrameControl::TYPE_MASK;
-			if (frameType == ieee::FrameControl::TYPE_ACK && mac[2] == this->sendBuffers.front().packet[MAX_HEADER_SIZE + 2]) {
-				// disable interrupts of ACK wait and backoff
-				NRF_TIMER0->INTENCLR =
-					N(TIMER_INTENCLR_COMPARE1, Clear)
-					| N(TIMER_INTENCLR_COMPARE3, Clear);
+			if (frameType == ieee::FrameControl::TYPE_ACK) {
+				// check if mac counter of sent packet matches mac counter of ACK packet
+				auto &sentBuffer = this->sendBuffers.front();
+				if (mac[2] == sentBuffer.data[sentBuffer.p.headerSize + 2]) {
+					// disable interrupts of ACK wait and backoff
+					NRF_TIMER0->INTENCLR =
+						N(TIMER_INTENCLR_COMPARE1, Clear)
+						| N(TIMER_INTENCLR_COMPARE3, Clear);
 
-				// set state of sent packet to success, send state becomes idle
-//debug::set(debug::YELLOW);
-				finishSend(true);
+					// set state of sent packet to success, send state becomes idle
+	//debug::set(debug::YELLOW);
+					finishSend(true);
 
-				// check if more to send
-				selectForSend();
+					// check if more to send
+					selectForSend();
+				}
 			}
 		}
 
@@ -712,30 +718,28 @@ void Ieee802154Radio_RADIO_TIMER0::RADIO_IRQHandler() {
 				if (passThis) {
 					node.receiveBuffers.pop([this, mac, size](Buffer &buffer) {
 						// set header
-						{
-							auto h = buffer.packet + MAX_HEADER_SIZE - 1;
+						auto header = buffer.data;
+						int headerSize = 1;
 
-							// link quality indicator (LQI)
-							h[0] = mac[size];
+						// link quality indicator (LQI)
+						header[0] = mac[size];
 
-							// timestamp
-							if (RECEIVE_HEADER_SIZE >= 5) {
-								h -= 4;
-								uint32_t timestamp = NRF_TIMER0->CC[1];
-								h[0] = timestamp;
-								h[1] = timestamp >> 8;
-								h[2] = timestamp >> 16;
-								h[3] = timestamp >> 24;
-								buffer.p.headerSize = 5;
-							} else {
-								buffer.p.headerSize = 1;
-							}
+						// timestamp
+						if (RECEIVE_HEADER_SIZE >= 5) {
+							uint32_t timestamp = NRF_TIMER0->CC[1];
+							header[1] = timestamp;
+							header[2] = timestamp >> 8;
+							header[3] = timestamp >> 16;
+							header[4] = timestamp >> 24;
+							headerSize = 5;
 						}
+						buffer.p.headerSize = headerSize;
 
 						// copy payload
-						buffer.p.size = size;
-						std::copy(mac, mac + size, buffer.packet + MAX_HEADER_SIZE);
+						buffer.p.size = headerSize + size;
+						std::copy(mac, mac + size, buffer.data + headerSize);
 
+						// pass buffer to event loop so that the main application gets notified
 						this->loop.push(buffer);
 						return true;
 					});

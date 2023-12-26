@@ -135,7 +135,6 @@ static const UsbConfiguration configurationDescriptor = {
 // check if number of virtual raido nodes does not exceed the number of usb endpoints
 static_assert(NODE_COUNT * 2 <= std::size(configurationDescriptor.endpoints));
 
-int globalHeaderSize = 1;
 
 // handle control requests
 Coroutine control(Loop &loop, UsbDevice &device, Buffer &buffer, Ieee802154Radio &radio, Drivers::RadioNode *nodes) {
@@ -144,6 +143,7 @@ Coroutine control(Loop &loop, UsbDevice &device, Buffer &buffer, Ieee802154Radio
 
 		// wait for a control request (https://www.beyondlogic.org/usbnutshell/usb6.shtml)
 		co_await device.request(setup);
+		//debug::setRed();
 
 		// handle request
 		switch (setup.requestType) {
@@ -173,9 +173,9 @@ Coroutine control(Loop &loop, UsbDevice &device, Buffer &buffer, Ieee802154Radio
 		case usb::RequestType::VENDOR_DEVICE_OUT:
 			switch (Ieee802154Radio::Request(setup.request)) {
 			case Ieee802154Radio::Request::START:
+				//debug::setBlue();
 				device.acknowledge();
 				radio.start(setup.value);
-				//debug::setBlue(false);
 				break;
 			case Ieee802154Radio::Request::STOP:
 				device.acknowledge();
@@ -183,7 +183,7 @@ Coroutine control(Loop &loop, UsbDevice &device, Buffer &buffer, Ieee802154Radio
 				break;
 			case Ieee802154Radio::Request::CONFIGURE:
 				{
-					//debug::setBlue(true);
+					//debug::setGreen();
 
 					// read uint32 and set as debug color
 					co_await buffer.read(setup.length);
@@ -196,10 +196,6 @@ Coroutine control(Loop &loop, UsbDevice &device, Buffer &buffer, Ieee802154Radio
 						nodes[setup.index - 1].configure(pan, longAddress, shortAddress, filterFlags);
 					}
 				}
-				break;
-			case Ieee802154Radio::Request::SET_HEADER_SIZE:
-				device.acknowledge();
-				globalHeaderSize = setup.value;
 				break;
 			default:
 				device.stall();
@@ -222,21 +218,19 @@ Coroutine receive(Drivers::RadioNode &node, Drivers::UsbEndpoint &endpoint) {
 		co_await radioBuffer.untilReady();
 		co_await usbBuffer.untilReady();
 		while (radioBuffer.ready() && usbBuffer.ready()) {
-
 			// receive from radio
 			debug::setGreen(false);
-			co_await radioBuffer.read(radioBuffer.capacity());
-			int size = radioBuffer.size();
+			co_await radioBuffer.read();
 			debug::setGreen(true);
+			int transferred = radioBuffer.size();
 
 			// check if packet has minimum length of 2 bytes for frame control
-			if (size >= 2) {
+			if (transferred >= 2) {
 				// send to usb host
 				BufferWriter w(usbBuffer);
-				int headerSize = std::min(radioBuffer.headerSize(), globalHeaderSize);
-				w.fill(globalHeaderSize - headerSize, 0);
-				w.data(radioBuffer.data() - headerSize, headerSize + size);
-
+				int headerSize = radioBuffer.headerSize();
+				w.u8(headerSize);
+				w.data(radioBuffer.headerData(), headerSize + transferred);
 				co_await usbBuffer.write(w); // IN
 			}
 		}
@@ -252,34 +246,35 @@ Coroutine send(Drivers::Radio::Node &node, Drivers::UsbEndpoint &endpoint, int i
 		co_await usbBuffer.untilReady();
 		while (radioBuffer.ready() && usbBuffer.ready()) {
 			// receive from usb host
-			co_await usbBuffer.read(usbBuffer.capacity()); // OUT
+			co_await usbBuffer.read(); // OUT
+			auto data = usbBuffer.data();
 			int transferred = usbBuffer.size();
-			int headerSize = globalHeaderSize;
-			int size = transferred - headerSize;
 
 			if (transferred == 1) {
 				// cancel by mac counter
-				uint8_t macCounter = usbBuffer[0];
+				uint8_t macCounter = data[0];
 				barriers[index][macCounter].doAll();
-			} else if (size >= 2) {
-				debug::setRed(true);
+			} else {
+				int headerSize = data[0];
+				int size = transferred - 1 - headerSize;
+				if (size >= 2) {
+					// get mac counter to identify the packet
+					uint8_t macCounter = data[1 + headerSize + 2];
 
-				// get mac counter to identify the packet
-				uint8_t macCounter = usbBuffer[headerSize + 2];
+					// set header
+					radioBuffer.setHeader(data, headerSize);
 
-				// set header
-				radioBuffer.setHeader(usbBuffer.data(), headerSize);
-
-				// send over the air
-				int r = co_await select(radioBuffer.writeData(usbBuffer.data() + headerSize, size), barriers[index][macCounter].wait());
-
-				if (r == 1) {
-					// send mac counter and number of transferred bytes back to usb host
-					usbBuffer[0] = macCounter;
-					usbBuffer[1] = radioBuffer.size();
-					co_await usbBuffer.write(2); // IN
+					// send over the air
+					debug::setRed(true);
+					int r = co_await select(radioBuffer.writeData(data + 1 + headerSize, size), barriers[index][macCounter].wait());
+					if (r == 1) {
+						// send mac counter and number of transferred bytes back to usb host
+						usbBuffer[0] = macCounter;
+						usbBuffer[1] = radioBuffer.size();
+						co_await usbBuffer.write(2); // IN
+					}
+					debug::setRed(false);
 				}
-				debug::setRed(false);
 			}
 		}
 	}
@@ -296,12 +291,12 @@ int main(void) {
 		}
 	}
 
-/*
+
 	// configure and start radio
 	drivers.nodes[0].configure(0, UINT64_C(0x0000133700001337), 1337,
 		Ieee802154Radio::FilterFlags::PASS_DEST_LONG | Ieee802154Radio::FilterFlags::PASS_DEST_SHORT | Ieee802154Radio::FilterFlags::HANDLE_ACK);
 	drivers.radio.start(15);
-*/
+
 
 	drivers.loop.run();
 }

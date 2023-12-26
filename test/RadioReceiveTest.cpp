@@ -22,7 +22,7 @@ Coroutine receive(Loop &loop, Buffer &radioBuffer) {
 #endif
 		while (radioBuffer.ready()) {
 			// wait for receive packet
-			co_await radioBuffer.read(radioBuffer.capacity());
+			co_await radioBuffer.read();
 			int transferred = radioBuffer.size();
 
 #ifdef NATIVE

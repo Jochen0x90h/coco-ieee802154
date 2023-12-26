@@ -107,13 +107,13 @@ public:
 		bool cancel() override;
 
 	protected:
-		//bool startInternal(int size, Op op) override;
 		void handle() override;
 
 		Node &node;
 
-		// first byte contains the length of the payload plus 2 for crc
-		uint8_t packet[BUFFER_SIZE];
+		// space for length byte of send packets when no header is present
+		uint8_t length;
+		uint8_t data[BUFFER_SIZE];
 
 		enum class Mode {
 			// is in node.receiveTransfers
@@ -126,8 +126,6 @@ public:
 			SEND,
 		};
 		Mode mode;
-
-		//bool finished;
 	};
 
 	void RADIO_IRQHandler();
