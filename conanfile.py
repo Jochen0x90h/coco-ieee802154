@@ -1,5 +1,5 @@
-import os
-from conans import ConanFile
+from conan import ConanFile
+from conan.tools.files import copy
 from conan.tools.cmake import CMake
 
 
@@ -18,7 +18,6 @@ class Project(ConanFile):
         "coco-loop/pow10",
         "coco-buffer/pow10",
     ]
-    tool_requires = "coco-toolchain/pow10"
 
 
     # check if we are cross compiling
@@ -27,28 +26,28 @@ class Project(ConanFile):
             return self.settings.os != self.settings_build.os
         return False
 
+    def build_requirements(self):
+        self.tool_requires("coco-toolchain/pow10", options={"platform": self.options.platform})
+        self.test_requires("coco-devboards/pow10", options={"platform": self.options.platform})
+
     def requirements(self):
         # todo: maybe put RadioDevice into separate project
         #if self.options.platform == "native" or self.options.platform == "emu":
         self.requires("coco-usb/pow10") # radio via USB
 
-    def build_requirements(self):
-        self.test_requires("coco-devboards/pow10")
 
     def configure(self):
         # pass platform option to dependencies
-        self.options["coco"].platform = self.options.platform
-        self.options["coco-loop"].platform = self.options.platform
-        self.options["coco-buffer"].platform = self.options.platform
-        self.options["coco-usb"].platform = self.options.platform
-        self.options["coco-toolchain"].platform = self.options.platform
-        self.options["coco-devboards"].platform = self.options.platform
+        self.options["coco/*"].platform = self.options.platform
+        self.options["coco-loop/*"].platform = self.options.platform
+        self.options["coco-buffer/*"].platform = self.options.platform
+        self.options["coco-usb/*"].platform = self.options.platform
 
     keep_imports = True
     def imports(self):
         # copy dependent libraries into the build folder
-        self.copy("*", src="@bindirs", dst="bin")
-        self.copy("*", src="@libdirs", dst="lib")
+        copy(self, "*", src="@bindirs", dst="bin")
+        copy(self, "*", src="@libdirs", dst="lib")
 
     def build(self):
         cmake = CMake(self)
