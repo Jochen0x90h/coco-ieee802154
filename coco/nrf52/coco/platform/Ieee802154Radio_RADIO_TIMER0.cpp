@@ -76,7 +76,7 @@ static inline void unlock() {
 
 // Ieee802154Radio_RADIO_TIMER0
 
-Ieee802154Radio_RADIO_TIMER0::Ieee802154Radio_RADIO_TIMER0(Loop_RTC0 &loop)
+Ieee802154Radio_RADIO_TIMER0::Ieee802154Radio_RADIO_TIMER0(Loop_Queue &loop)
 	: loop(loop)
 {
 	//Ieee802154Radio_RADIO_TIMER0_EGU0::instance = this;

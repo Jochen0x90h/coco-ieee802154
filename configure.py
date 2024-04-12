@@ -1,8 +1,8 @@
 # Configure the project for use in an IDE that supports CMakeUserPresets.json
 #
-# usage: python configure.py [install]
-#
-# install option builds and installs the project to ~/.local/bin
+# usage:
+# 1. Copy presets.txt from coco/support/conan/[windows] to project root (next to this file) and adjust to own needs
+# 2. python configure.py
 #
 
 import sys
@@ -77,10 +77,3 @@ for preset in presets:
 file = open("CMakeUserPresets.json", "w")
 file.write(json.dumps(cmakePresets, indent=4))
 file.close()
-
-if 'install' in sys.argv:
-    # configure
-    subprocess.run(f"cmake --preset native-Release", shell=True)
-
-    # build and install to ~/.local/bin
-    subprocess.run(f"cmake --build build/native-Release --config Release --target install", shell=True)

@@ -4,7 +4,7 @@
 #include <coco/BufferImpl.hpp>
 #include <coco/PseudoRandom.hpp>
 #include <coco/IntrusiveList.hpp>
-#include <coco/platform/Loop_RTC0.hpp>
+#include <coco/platform/Loop_Queue.hpp>
 #include <coco/platform/nvic.hpp>
 
 
@@ -42,7 +42,7 @@ namespace coco {
 */
 class Ieee802154Radio_RADIO_TIMER0 : public Ieee802154Radio {
 public:
-	Ieee802154Radio_RADIO_TIMER0(Loop_RTC0 &loop);
+	Ieee802154Radio_RADIO_TIMER0(Loop_Queue &loop);
 	~Ieee802154Radio_RADIO_TIMER0() override;
 
 	void start(int channel) override;
@@ -95,9 +95,9 @@ public:
 
 	/**
 		Buffer for transferring data over RADIO.
-		Derives from IntrusiveListNode for the list of buffers and Loop_TIM2::Handler2 to be notified from the event loop
+		Derives from IntrusiveListNode for the list of buffers and Loop_Queue::Handler to be notified from the event loop
 	*/
-	class Buffer : public BufferImpl, public IntrusiveListNode, public Loop_RTC0::Handler2 {
+	class Buffer : public BufferImpl, public IntrusiveListNode, public Loop_Queue::Handler {
 		friend class Ieee802154Radio_RADIO_TIMER0;
 	public:
 		Buffer(Node &node);
@@ -164,7 +164,7 @@ protected:
 	void handleTimer();
 
 	//static Ieee802154Radio_RADIO_TIMER0_EGU0 *instance;
-	Loop_RTC0 &loop;
+	Loop_Queue &loop;
 
 	// radio state
 	State stat = State::DISABLED;
