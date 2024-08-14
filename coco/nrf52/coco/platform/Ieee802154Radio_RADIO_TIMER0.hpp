@@ -1,7 +1,6 @@
 #pragma once
 
 #include <coco/Ieee802154Radio.hpp>
-#include <coco/BufferImpl.hpp>
 #include <coco/PseudoRandom.hpp>
 #include <coco/IntrusiveList.hpp>
 #include <coco/platform/Loop_Queue.hpp>
@@ -11,49 +10,52 @@
 namespace coco {
 
 /**
-	Implementation of IEEE 802.15.4 radio using RADIO and TIMER0.
-	Supports multiple virtual nodes each with its own pan id and address. This can be used to use several networks and
-	protocols at the same time.
-
-	Resources:
-		NRF_RADIO
-		NRF_TIMER0
- 			CC[0]: ack turnaround timeout, minimum time between received packet and sending ack
- 			CC[1]: ack wait timeout, maximum time to wait for receiving ack after sending a packet
- 			CC[2]: time of last packet received or sent
-			CC[3]: backoff timeout
-		NRF_PPI
- 			CH[27]: RADIO.EVENTS_END -> TIMER0.TASKS_CAPTURE[2]
-
-	Glossary:
-		CCA: Clear Channel Assessment (-> energy and/or carrier detection)
-		ED: Energy Detection on a radio channel
-		RFD: Reduced-function defice (can only talk to -> FFDs)
-		FFD: Full-function device
-		MLME: MAC Layer Management Entity, management service of the MAC layer
-		MCPS: MAC Common Part Layer, data transport service of the MAC layer
-		PIB:  PAN Information Base
-
-	References:
-		https://www.prismmodelchecker.org/casestudies/zigbee.php
-
-	Bugs:
-		No timeout for send() with SendFlags::AWAIT_DATA_REQUEST, i.e. waits forever
-*/
+ * Implementation of IEEE 802.15.4 radio using RADIO and TIMER0.
+ * Supports multiple virtual nodes each with its own pan id and address. This can be used to use several networks and
+ * protocols at the same time.
+ *
+ * Resources:
+ *   NRF_RADIO
+ *   NRF_TIMER0
+ *     CC[0]: ack turnaround timeout, minimum time between received packet and sending ack
+ *     CC[1]: ack wait timeout, maximum time to wait for receiving ack after sending a packet
+ *     CC[2]: time of last packet received or sent
+ *     CC[3]: backoff timeout
+ *   NRF_PPI
+ *     CH[27]: RADIO.EVENTS_END -> TIMER0.TASKS_CAPTURE[2]
+ *
+ * Glossary:
+ *   CCA: Clear Channel Assessment (-> energy and/or carrier detection)
+ *   ED: Energy Detection on a radio channel
+ *   RFD: Reduced-function defice (can only talk to -> FFDs)
+ *   FFD: Full-function device
+ *   MLME: MAC Layer Management Entity, management service of the MAC layer
+ *   MCPS: MAC Common Part Layer, data transport service of the MAC layer
+ *   PIB:  PAN Information Base
+ *
+ *  References:
+ *    https://www.prismmodelchecker.org/casestudies/zigbee.php
+ *
+ * Bugs:
+ *   No timeout for send() with SendFlags::AWAIT_DATA_REQUEST, i.e. waits forever
+ */
 class Ieee802154Radio_RADIO_TIMER0 : public Ieee802154Radio {
 public:
 	Ieee802154Radio_RADIO_TIMER0(Loop_Queue &loop);
 	~Ieee802154Radio_RADIO_TIMER0() override;
 
-	void start(int channel) override;
-	void stop() override;
+	// Device methods
+	void close() override;
+
+	// Ieee802154Radio methods
+	void open(int channel) override;
 
 
 	class Buffer;
 
 	/**
-		Virtual node with own pan id and address. This can be used to use several networks and protocols at the same time
-	*/
+	 * Virtual node with own pan id and address. This can be used to use several networks and protocols at the same time
+	 */
 	class Node : public Ieee802154Radio::Node, public IntrusiveListNode {
 		friend class Ieee802154Radio_RADIO_TIMER0;
 		friend class Buffer;
@@ -61,11 +63,16 @@ public:
 		Node(Ieee802154Radio_RADIO_TIMER0 &device);
 		~Node() override;
 
-		State state() override;
-		[[nodiscard]] Awaitable<> stateChange(int waitFlags = -1) override;
+		// Device methods
+		//StateTasks<const State, Events> &getStateTasks() override;
+		//State state() override;
+		//[[nodiscard]] Awaitable<Condition> until(Condition condition) override;
+
+		// BufferDevice methods
 		int getBufferCount() override;
 		coco::Buffer &getBuffer(int index) override;
 
+		// Ieee802154Radio::Node methods
 		void configure(uint16_t pan, uint64_t longAddress, uint16_t shortAddress, FilterFlags filterFlags) override;
 
 	protected:
@@ -87,22 +94,23 @@ public:
 		IntrusiveList<Buffer> buffers;
 
 		// list of active receive buffers
-		nvic::Queue<Buffer> receiveBuffers;
+		InterruptQueue<Buffer> receiveBuffers;
 
 		// list of buffers that can be sent on data request
-		nvic::Queue<Buffer> requestBuffers;
+		InterruptQueue<Buffer> requestBuffers;
 	};
 
 	/**
-		Buffer for transferring data over RADIO.
-		Derives from IntrusiveListNode for the list of buffers and Loop_Queue::Handler to be notified from the event loop
-	*/
-	class Buffer : public BufferImpl, public IntrusiveListNode, public Loop_Queue::Handler {
+	 * Buffer for transferring data over the radio.
+	 * Derives from IntrusiveListNode for the list of buffers and Loop_Queue::Handler to be notified from the event loop
+	 */
+	class Buffer : public coco::Buffer, public IntrusiveListNode, public Loop_Queue::Handler {
 		friend class Ieee802154Radio_RADIO_TIMER0;
 	public:
 		Buffer(Node &node);
 		~Buffer() override;
 
+		// Buffer methods
 		bool start(Op op) override;
 		bool cancel() override;
 
@@ -166,15 +174,17 @@ protected:
 	//static Ieee802154Radio_RADIO_TIMER0_EGU0 *instance;
 	Loop_Queue &loop;
 
-	// radio state
-	State stat = State::DISABLED;
+	// device state
+	//StateTasks<Device::State, Device::Events> st = Device::State::READY;
 
-	CoroutineTaskList<> stateTasks;
+	// radio state
+	//State stat = State::DISABLED;
+	//CoroutineTaskList<Device::Condition> stateTasks;
 
 	// list of virtual nodes
 	IntrusiveList<Node> nodes;
 
-	// receiver is enabled if at least one receive buffer is queued (in Channel::receiveBuffers) or when waiting for ACK
+	// receiver is enabled when start() gets called and disabled when stop() gets called
 	bool receiverEnabled = false;
 
 	// receive packet, gets copied to first receiveBuffer of each channel if it passes the filter
@@ -184,7 +194,7 @@ protected:
 	uint32_t ifsDuration = 0;
 
 	// list of active send transfers
-	nvic::Queue<Buffer> sendBuffers;
+	InterruptQueue<Buffer> sendBuffers;
 	uint8_t ackPacket[4] = {5, 0x02, 0x00, 0};
 
 	enum SendState : uint8_t {

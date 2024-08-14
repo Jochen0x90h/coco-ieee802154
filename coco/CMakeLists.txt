@@ -27,7 +27,7 @@ endif()
 target_link_libraries(${PROJECT_NAME}
 	coco::coco
 	coco-loop::coco-loop
-	coco-buffer::coco-buffer
+	coco-device::coco-device
 )
 
 # link to coco-usb on native platforms

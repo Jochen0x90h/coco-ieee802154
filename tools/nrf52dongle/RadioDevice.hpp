@@ -22,8 +22,8 @@ struct Drivers {
 
 	// usb
 	using UsbDevice = UsbDevice_USBD;
-	using UsbEndpoint = UsbDevice::BulkEndpoint;
-	using UsbBuffer = UsbDevice::BulkBuffer<1 + Radio::BUFFER_SIZE + 1>;
+	using UsbEndpoint = UsbDevice::Endpoint;
+	using UsbBuffer = UsbDevice::Buffer<1 + Radio::BUFFER_SIZE + 1>;
 	UsbDevice device{loop};
 	UsbDevice::ControlBuffer<256> controlBuffer{device};
 	UsbEndpoint endpoints[NODE_COUNT] = {{device, 1}, {device, 2}, {device, 3}, {device, 4}};

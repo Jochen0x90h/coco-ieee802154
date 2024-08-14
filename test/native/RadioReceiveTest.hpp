@@ -19,8 +19,8 @@ struct Drivers {
 		return deviceDescriptor.idVendor == 0x1915 && deviceDescriptor.idProduct == 0x1337;
 	}};
 	UsbHost::ControlBuffer controlBuffer{32, device};
-	UsbHost::BulkEndpoint bulkEndpoint{device, 1};
-	UsbHost::BulkBuffer bulkBuffer{1 + Radio::BUFFER_SIZE + 1, bulkEndpoint};
+	UsbHost::Endpoint bulkEndpoint{device, 1};
+	UsbHost::Buffer bulkBuffer{1 + Radio::BUFFER_SIZE + 1, bulkEndpoint};
 
 	// radio
 	Radio radio{controlBuffer};

@@ -52,7 +52,7 @@ int main() {
 //		Ieee802154Radio::FilterFlags::PASS_ALL);
 
 	// start radio
-	drivers.radio.start(15);
+	drivers.radio.open(15);
 
 	receive(drivers.loop, drivers.radioBuffer);
 

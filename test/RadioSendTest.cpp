@@ -95,7 +95,7 @@ int main() {
 		//Ieee802154Radio::FilterFlags::PASS_ALL);
 
 	// start radio
-	drivers.radio.start(channel);
+	drivers.radio.open(channel);
 
 	send(drivers.loop, drivers.radioBuffer);
 	//reply(drivers.loop, drivers.radioBuffer);

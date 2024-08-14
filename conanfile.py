@@ -24,7 +24,7 @@ class Project(ConanFile):
 
     def requirements(self):
         self.requires("coco-loop/pow10", options={"platform": self.options.platform})
-        self.requires("coco-buffer/pow10", options={"platform": self.options.platform})
+        self.requires("coco-device/pow10", options={"platform": self.options.platform})
         # todo: maybe put RadioDevice into separate project
         #if self.options.platform == "native" or self.options.platform == "emu":
         self.requires("coco-usb/pow10", options={"platform": self.options.platform}) # radio via USB

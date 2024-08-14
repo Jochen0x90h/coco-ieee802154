@@ -61,7 +61,7 @@ inline bool isReceiveState() {
 
 // interrupt
 // ---------
-
+/*
 static inline void lock() {
 	nvic::disable(RADIO_IRQn);
 	nvic::disable(TIMER0_IRQn);
@@ -71,13 +71,14 @@ static inline void unlock() {
 	nvic::enable(RADIO_IRQn);
 	nvic::enable(TIMER0_IRQn);
 }
-
+*/
 
 
 // Ieee802154Radio_RADIO_TIMER0
 
 Ieee802154Radio_RADIO_TIMER0::Ieee802154Radio_RADIO_TIMER0(Loop_Queue &loop)
-	: loop(loop)
+	: Ieee802154Radio(State::DISABLED)
+	, loop(loop)
 {
 	//Ieee802154Radio_RADIO_TIMER0_EGU0::instance = this;
 
@@ -132,12 +133,51 @@ Ieee802154Radio_RADIO_TIMER0::Ieee802154Radio_RADIO_TIMER0(Loop_Queue &loop)
 Ieee802154Radio_RADIO_TIMER0::~Ieee802154Radio_RADIO_TIMER0() {
 }
 
-void Ieee802154Radio_RADIO_TIMER0::start(int channel) {
+void Ieee802154Radio_RADIO_TIMER0::close() {
+	// disable timer
+	NRF_TIMER0->INTENCLR = N(TIMER_INTENCLR_COMPARE0, Clear)
+		| N(TIMER_INTENCLR_COMPARE1, Clear)
+		| N(TIMER_INTENCLR_COMPARE3, Clear);
+	NRF_TIMER0->TASKS_STOP = TRIGGER;
+
+	{
+		nvic::Guard2 guard(RADIO_IRQn, TIMER0_IRQn);
+
+		// reset state variables
+		this->receiverEnabled = false;
+		this->endAction = EndAction::NOP;
+
+		// disable radio
+		NRF_RADIO->SHORTS = 0;
+		NRF_RADIO->TASKS_STOP = TRIGGER;
+		NRF_RADIO->TASKS_EDSTOP = TRIGGER;
+		NRF_RADIO->TASKS_CCASTOP = TRIGGER;
+		NRF_RADIO->TASKS_DISABLE = TRIGGER; // -> DISABLED
+
+		// clear queues
+		this->sendBuffers.clear();
+		for (auto &node : this->nodes) {
+			node.receiveBuffers.clear();
+			node.requestBuffers.clear();
+		}
+	}
+
+	// set state of buffers to disabled and resume all coroutines waiting for a state change
+	for (auto &node : this->nodes) {
+		for (auto &buffer : node.buffers) {
+			buffer.setDisabled();
+		}
+		node.st.set(State::DISABLED, Device::Events::ENTER_CLOSING | Device::Events::ENTER_DISABLED);
+	}
+	this->st.set(State::DISABLED, Device::Events::ENTER_CLOSING | Device::Events::ENTER_DISABLED);
+}
+
+void Ieee802154Radio_RADIO_TIMER0::open(int channel) {
 	assert(channel >= 11 && channel <= 26);
 
 	// stop if currently active
-	if (this->stat == State::READY)
-		stop();
+	if (this->st.state == State::READY)
+		close();
 
 	// set channel
 	NRF_RADIO->FREQUENCY = V(RADIO_FREQUENCY_FREQUENCY, (channel - 10) * 5);
@@ -146,80 +186,35 @@ void Ieee802154Radio_RADIO_TIMER0::start(int channel) {
 	NRF_TIMER0->TASKS_CLEAR = TRIGGER;
 	NRF_TIMER0->TASKS_START = TRIGGER;
 
-	lock();
+	{
+		nvic::Guard2 guard(RADIO_IRQn, TIMER0_IRQn);
 
-	// set state
-	this->stat = State::READY;
-	this->receiverEnabled = true;
+		// set state variables
+		this->receiverEnabled = true;
 
-	// enable radio if it is currently disabled. If not, then it gets enabled on DISABLED event in the interrupt handler
-	if (isDisabled()) {
-		// enable receiving mode (not the baseband decoder, packets will not be received yet)
-		NRF_RADIO->TASKS_RXEN = TRIGGER; // -> RXREADY
+		// enable radio if it is currently disabled. If not, then it gets enabled on DISABLED event in the interrupt handler
+		if (isDisabled()) {
+			// enable receiving mode (not the baseband decoder, packets will not be received yet)
+			NRF_RADIO->TASKS_RXEN = TRIGGER; // -> RXREADY
+		}
 	}
 
-	unlock();
-
-	// set state of buffers to ready
+	// set state of buffers to ready and resume all coroutines waiting for a state change
 	for (auto &node : this->nodes) {
 		for (auto &buffer : node.buffers) {
 			buffer.setReady(0);
 		}
+		node.st.set(State::READY, Device::Events::ENTER_OPENING | Device::Events::ENTER_READY);
 	}
-
-	// resume all coroutines waiting for a state change
-	this->stateTasks.doAll();
-}
-
-void Ieee802154Radio_RADIO_TIMER0::stop() {
-	// disable timer
-	NRF_TIMER0->INTENCLR = N(TIMER_INTENCLR_COMPARE0, Clear)
-		| N(TIMER_INTENCLR_COMPARE1, Clear)
-		| N(TIMER_INTENCLR_COMPARE3, Clear);
-	NRF_TIMER0->TASKS_STOP = TRIGGER;
-
-	lock();
-
-	// reset state variables
-	this->stat = State::DISABLED;
-	this->receiverEnabled = false;
-	this->endAction = EndAction::NOP;
-
-	// disable radio
-	NRF_RADIO->SHORTS = 0;
-	NRF_RADIO->TASKS_STOP = TRIGGER;
-	NRF_RADIO->TASKS_EDSTOP = TRIGGER;
-	NRF_RADIO->TASKS_CCASTOP = TRIGGER;
-	NRF_RADIO->TASKS_DISABLE = TRIGGER; // -> DISABLED
-
-	// set state of buffers to disabled
-	this->sendBuffers.clear();
-	for (auto &node : this->nodes) {
-		node.receiveBuffers.clear();
-		node.requestBuffers.clear();
-
-		for (auto &buffer : node.buffers) {
-			// cancel (remove from receiveBuffers, requestBuffers or sendBuffers)
-			//buffer.remove2();
-			buffer.p.size = 0;
-
-			unlock();
-			buffer.setDisabled();
-			lock();
-		}
-	}
-
-	unlock();
-
-	// resume all coroutines waiting for a state change
-	this->stateTasks.doAll();
+	this->st.set(State::READY, Device::Events::ENTER_OPENING | Device::Events::ENTER_READY);
 }
 
 
 // Node
 
 Ieee802154Radio_RADIO_TIMER0::Node::Node(Ieee802154Radio_RADIO_TIMER0 &device)
-	: device(device)
+	: Ieee802154Radio::Node(device.st.state)
+	, device(device)
 {
 	device.nodes.add(*this);
 }
@@ -227,15 +222,21 @@ Ieee802154Radio_RADIO_TIMER0::Node::Node(Ieee802154Radio_RADIO_TIMER0 &device)
 Ieee802154Radio_RADIO_TIMER0::Node::~Node() {
 }
 
+//StateTasks<const Device::State, Device::Events> &Ieee802154Radio_RADIO_TIMER0::Node::getStateTasks() {
+//	return makeConst(this->device.st);
+//}
+
+/*
 Device::State Ieee802154Radio_RADIO_TIMER0::Node::state() {
 	return this->device.stat;
 }
 
-Awaitable<> Ieee802154Radio_RADIO_TIMER0::Node::stateChange(int waitFlags) {
-	if ((waitFlags & (1 << int(this->device.stat))) == 0)
-		return {};
-	return {this->device.stateTasks};
-}
+Awaitable<Device::Condition> Ieee802154Radio_RADIO_TIMER0::Node::until(Condition condition) {
+	// check if IN_* condition is met
+	if ((int(condition) >> int(this->device.stat)) & 1)
+		return {}; // don't wait
+	return {this->device.stateTasks, condition};
+}*/
 
 int Ieee802154Radio_RADIO_TIMER0::Node::getBufferCount() {
 	return this->buffers.count();
@@ -342,7 +343,7 @@ bool Ieee802154Radio_RADIO_TIMER0::Node::request(uint16_t panId, const uint8_t *
 // Buffer
 
 Ieee802154Radio_RADIO_TIMER0::Buffer::Buffer(Node &node)
-	: BufferImpl(data, BUFFER_SIZE, node.device.stat)
+	: coco::Buffer(data, BUFFER_SIZE, node.st.state)
 	, node(node)
 {
 	node.buffers.add(*this);
@@ -352,28 +353,31 @@ Ieee802154Radio_RADIO_TIMER0::Buffer::~Buffer() {
 }
 
 bool Ieee802154Radio_RADIO_TIMER0::Buffer::cancel() {
-	if (this->p.state != State::BUSY)
+	if (this->st.state != State::BUSY)
 		return false;
 	auto &node = this->node;
 	auto &device = node.device;
 
-	lock();
 	bool success = true;
-	switch (this->mode) {
-	case Mode::RECEIVE:
-		// remove from pending receive transfers
-		node.receiveBuffers.remove(*this);
-		break;
-	case Mode::REQUEST:
-		// remove from pending request buffers
-		node.requestBuffers.remove(*this);
-		break;
-	case Mode::SEND:
-		// remove from pending send transfers if not yet started, otherwise complete normally
-		success = device.sendBuffers.remove(*this, false);
-		break;
+	{
+		nvic::Guard2 guard(RADIO_IRQn, TIMER0_IRQn);
+		//lock();
+		switch (this->mode) {
+		case Mode::RECEIVE:
+			// remove from pending receive transfers
+			node.receiveBuffers.remove(*this);
+			break;
+		case Mode::REQUEST:
+			// remove from pending request buffers
+			node.requestBuffers.remove(*this);
+			break;
+		case Mode::SEND:
+			// remove from pending send transfers if not yet started, otherwise complete normally
+			success = device.sendBuffers.remove(*this, false);
+			break;
+		}
+		//unlock();
 	}
-	unlock();
 	if (success)
 		setReady(0);
 
@@ -381,48 +385,43 @@ bool Ieee802154Radio_RADIO_TIMER0::Buffer::cancel() {
 }
 
 bool Ieee802154Radio_RADIO_TIMER0::Buffer::start(Op op) {
-	if (this->p.state != State::READY) {
+	if (this->st.state != State::READY) {
 		assert(this->stat != State::BUSY);
 		return false;
 	}
-	auto &node = this->node;
-	auto &device = node.device;
 
 	// check if READ or WRITE flag is set
 	assert((op & Op::READ_WRITE) != 0);
 
-	lock();
-	if ((op & Op::WRITE) == 0) {
-		// receive
-		node.receiveBuffers.push(*this);
-		this->mode = Mode::RECEIVE;
+	auto &node = this->node;
+	auto &device = node.device;
 
-		//device.receiverEnabled = true;
+	{
+		nvic::Guard2 guard(RADIO_IRQn, TIMER0_IRQn);
 
-		// start receiver (base band decoder) if radio is in RxIdle state, otherwise do it on RXREADY
-		//if (isRxIdle()) {
-			// todo: maybe there is a race condition if the radio automatically switches to TXREADY after CCA here. maybe wait until CCA has ended
-		//	device.startReceive(); // -> END
-		//}
-	} else {
-		// send
-		auto sendFlags = SendFlags(this->p.headerSize >= 1 ? this->data[0] : 0);
-		if (sendFlags == SendFlags::AWAIT_DATA_REQUEST) {
-			// need to wait for a data request from the receiver of this packet
-			node.requestBuffers.push(*this);
-			this->mode = Mode::REQUEST;
+		if ((op & Op::WRITE) == 0) {
+			// receive
+			node.receiveBuffers.push(*this);
+			this->mode = Mode::RECEIVE;
 		} else {
-			// packet can be sent as soon as possible
-			device.sendBuffers.push(*this);
-			this->mode = Mode::SEND;
+			// send
+			auto sendFlags = SendFlags(this->p.headerSize >= 1 ? this->data[0] : 0);
+			if (sendFlags == SendFlags::AWAIT_DATA_REQUEST) {
+				// need to wait for a data request from the receiver of this packet
+				node.requestBuffers.push(*this);
+				this->mode = Mode::REQUEST;
+			} else {
+				// packet can be sent as soon as possible
+				device.sendBuffers.push(*this);
+				this->mode = Mode::SEND;
 
-			// check if we can start sending now
-			if (device.sendState == SendState::IDLE) {
-				device.prepareForSend(*this);
+				// check if we can start sending now
+				if (device.sendState == SendState::IDLE) {
+					device.prepareForSend(*this);
+				}
 			}
 		}
 	}
-	unlock();
 
 	// set state
 	setBusy();
@@ -660,7 +659,7 @@ void Ieee802154Radio_RADIO_TIMER0::RADIO_IRQHandler() {
 		// check if a node is interested in this packet and wants to handle ack
 		bool ack = false;
 		this->ackPacket[1] = uint8_t(ieee::FrameControl::TYPE_ACK);
-		bool listening = false;
+		//bool listening = false;
 		for (auto &node : this->nodes) {
 			// check if the node wants to receive the packet
 			if (node.filterFlags != FilterFlags::NONE && node.filter(mac)) {
@@ -745,9 +744,8 @@ void Ieee802154Radio_RADIO_TIMER0::RADIO_IRQHandler() {
 					});
 				}
 			}
-			listening |= !node.receiveBuffers.empty();
+			//listening |= !node.receiveBuffers.empty();
 		}
-		//this->receiverEnabled = listening;
 
 		// check if we need to send an ACK
 		if (ack) {
@@ -833,7 +831,8 @@ void Ieee802154Radio_RADIO_TIMER0::RADIO_IRQHandler() {
 		NRF_RADIO->SHORTS = 0;
 
 		// enable receiver again if radio is active
-		if (this->stat == State::READY) {
+		if (this->receiverEnabled) {
+		//if (this->st.state == State::READY) {
 			NRF_RADIO->TASKS_RXEN = TRIGGER; // -> RXREADY
 		}
 	}
