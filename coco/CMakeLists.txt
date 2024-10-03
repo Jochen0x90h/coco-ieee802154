@@ -18,16 +18,16 @@ if(${PLATFORM} STREQUAL "native" OR ${PLATFORM} STREQUAL "emu")
 elseif(${PLATFORM} MATCHES "^nrf52")
 	target_sources(${PROJECT_NAME}
 		PUBLIC FILE_SET platform_headers TYPE HEADERS BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/nrf52 FILES
-			nrf52/coco/platform/Ieee802154Radio_RADIO_TIMER0_EGU0.hpp
+			nrf52/coco/platform/Ieee802154Radio_RADIO_TIMER0.hpp
 		PRIVATE
-			nrf52/coco/platform/Ieee802154Radio_RADIO_TIMER0_EGU0.cpp
+			nrf52/coco/platform/Ieee802154Radio_RADIO_TIMER0.cpp
 	)
 endif()
 
 target_link_libraries(${PROJECT_NAME}
 	coco::coco
 	coco-loop::coco-loop
-	coco-buffer::coco-buffer
+	coco-device::coco-device
 )
 
 # link to coco-usb on native platforms

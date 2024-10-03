@@ -2,7 +2,16 @@
 
 #include <coco/enum.hpp>
 
-
+/**
+ * Structure of IEEE 802.15.4 header
+ *
+ * 2 Frame Control Field
+ * 1 Sequence Number
+ * 2 Destination PAN
+ * 2/8 Destination Address
+ * 2 Source PAN
+ * 1/8 Source Address
+ */
 namespace ieee802154 {
 
 // ieee 802.15.4 frame control field

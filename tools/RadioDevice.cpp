@@ -1,5 +1,6 @@
 #include <coco/debug.hpp>
 #include <coco/BufferReader.hpp>
+#include <coco/BufferWriter.hpp>
 #include <RadioDevice.hpp>
 
 
@@ -10,10 +11,10 @@ using namespace coco;
 
 // device descriptor
 static const usb::DeviceDescriptor deviceDescriptor = {
-	.bLength = sizeof(usb::DeviceDescriptor),
-	.bDescriptorType = usb::DescriptorType::DEVICE,
-	.bcdUSB = 0x0200, // USB 2.0
-	.bDeviceClass = 0xff, // no class
+	//.bLength = sizeof(usb::DeviceDescriptor),
+	//.bDescriptorType = usb::DescriptorType::DEVICE,
+	//.bcdUSB = 0x0200, // USB 2.0
+	.bDeviceClass = usb::DeviceClass::VENDOR,
 	.bDeviceSubClass = 0xff,
 	.bDeviceProtocol = 0, // 0 = binary, 1 = text
 	.bMaxPacketSize0 = 64, // max packet size for endpoint 0
@@ -35,8 +36,8 @@ struct UsbConfiguration {
 
 static const UsbConfiguration configurationDescriptor = {
 	.config = {
-		.bLength = sizeof(usb::ConfigurationDescriptor),
-		.bDescriptorType = usb::DescriptorType::CONFIGURATION,
+		//.bLength = sizeof(usb::ConfigurationDescriptor),
+		//.bDescriptorType = usb::DescriptorType::CONFIGURATION,
 		.wTotalLength = offsetof(UsbConfiguration, endpoints) + sizeof(usb::EndpointDescriptor) * NODE_COUNT * 2,
 		.bNumInterfaces = 1,
 		.bConfigurationValue = 1,
@@ -45,12 +46,12 @@ static const UsbConfiguration configurationDescriptor = {
 		.bMaxPower = 50 // 100 mA
 	},
 	.interface = {
-		.bLength = sizeof(usb::InterfaceDescriptor),
-		.bDescriptorType = usb::DescriptorType::INTERFACE,
+		//.bLength = sizeof(usb::InterfaceDescriptor),
+		//.bDescriptorType = usb::DescriptorType::INTERFACE,
 		.bInterfaceNumber = 0,
 		.bAlternateSetting = 0,
 		.bNumEndpoints = NODE_COUNT * 2,
-		.bInterfaceClass = 0xff, // no class
+		.bInterfaceClass = usb::InterfaceClass::VENDOR,
 		.bInterfaceSubClass = 0xff,
 		.bInterfaceProtocol = 0xff,
 		.iInterface = 0
@@ -58,8 +59,8 @@ static const UsbConfiguration configurationDescriptor = {
 	.endpoints = {
 		{
 			// endpoint 1 in (device to host, radio receive)
-			.bLength = sizeof(usb::EndpointDescriptor),
-			.bDescriptorType = usb::DescriptorType::ENDPOINT,
+			//.bLength = sizeof(usb::EndpointDescriptor),
+			//.bDescriptorType = usb::DescriptorType::ENDPOINT,
 			.bEndpointAddress = 1 | usb::IN,
 			.bmAttributes = usb::EndpointType::BULK,
 			.wMaxPacketSize = 64,
@@ -67,8 +68,8 @@ static const UsbConfiguration configurationDescriptor = {
 		},
 		{
 			// endpoint 1 out (host to device, radio send)
-			.bLength = sizeof(usb::EndpointDescriptor),
-			.bDescriptorType = usb::DescriptorType::ENDPOINT,
+			//.bLength = sizeof(usb::EndpointDescriptor),
+			//.bDescriptorType = usb::DescriptorType::ENDPOINT,
 			.bEndpointAddress = 1 | usb::OUT,
 			.bmAttributes = usb::EndpointType::BULK,
 			.wMaxPacketSize = 64,
@@ -76,8 +77,8 @@ static const UsbConfiguration configurationDescriptor = {
 		},
 		{
 			// endpoint 2 in (device to host, radio receive)
-			.bLength = sizeof(usb::EndpointDescriptor),
-			.bDescriptorType = usb::DescriptorType::ENDPOINT,
+			//.bLength = sizeof(usb::EndpointDescriptor),
+			//.bDescriptorType = usb::DescriptorType::ENDPOINT,
 			.bEndpointAddress = 2 | usb::IN,
 			.bmAttributes = usb::EndpointType::BULK,
 			.wMaxPacketSize = 64,
@@ -85,8 +86,8 @@ static const UsbConfiguration configurationDescriptor = {
 		},
 		{
 			// endpoint 2 out (host to device, radio send)
-			.bLength = sizeof(usb::EndpointDescriptor),
-			.bDescriptorType = usb::DescriptorType::ENDPOINT,
+			//.bLength = sizeof(usb::EndpointDescriptor),
+			//.bDescriptorType = usb::DescriptorType::ENDPOINT,
 			.bEndpointAddress = 2 | usb::OUT,
 			.bmAttributes = usb::EndpointType::BULK,
 			.wMaxPacketSize = 64,
@@ -94,8 +95,8 @@ static const UsbConfiguration configurationDescriptor = {
 		},
 		{
 			// endpoint 3 in (device to host, radio receive)
-			.bLength = sizeof(usb::EndpointDescriptor),
-			.bDescriptorType = usb::DescriptorType::ENDPOINT,
+			//.bLength = sizeof(usb::EndpointDescriptor),
+			//.bDescriptorType = usb::DescriptorType::ENDPOINT,
 			.bEndpointAddress = 3 | usb::IN,
 			.bmAttributes = usb::EndpointType::BULK,
 			.wMaxPacketSize = 64,
@@ -103,8 +104,8 @@ static const UsbConfiguration configurationDescriptor = {
 		},
 		{
 			// endpoint 3 out (host to device, radio send)
-			.bLength = sizeof(usb::EndpointDescriptor),
-			.bDescriptorType = usb::DescriptorType::ENDPOINT,
+			//.bLength = sizeof(usb::EndpointDescriptor),
+			//.bDescriptorType = usb::DescriptorType::ENDPOINT,
 			.bEndpointAddress = 3 | usb::OUT,
 			.bmAttributes = usb::EndpointType::BULK,
 			.wMaxPacketSize = 64,
@@ -112,8 +113,8 @@ static const UsbConfiguration configurationDescriptor = {
 		},
 		{
 			// endpoint 4 in (device to host, radio receive)
-			.bLength = sizeof(usb::EndpointDescriptor),
-			.bDescriptorType = usb::DescriptorType::ENDPOINT,
+			//.bLength = sizeof(usb::EndpointDescriptor),
+			//.bDescriptorType = usb::DescriptorType::ENDPOINT,
 			.bEndpointAddress = 4 | usb::IN,
 			.bmAttributes = usb::EndpointType::BULK,
 			.wMaxPacketSize = 64,
@@ -121,8 +122,8 @@ static const UsbConfiguration configurationDescriptor = {
 		},
 		{
 			// endpoint 4 out (host to device, radio send)
-			.bLength = sizeof(usb::EndpointDescriptor),
-			.bDescriptorType = usb::DescriptorType::ENDPOINT,
+			//.bLength = sizeof(usb::EndpointDescriptor),
+			//.bDescriptorType = usb::DescriptorType::ENDPOINT,
 			.bEndpointAddress = 4 | usb::OUT,
 			.bmAttributes = usb::EndpointType::BULK,
 			.wMaxPacketSize = 64,
@@ -136,20 +137,19 @@ static_assert(NODE_COUNT * 2 <= std::size(configurationDescriptor.endpoints));
 
 
 // handle control requests
-Coroutine control(Loop &loop, UsbDevice &device, Buffer &buffer, Ieee802154Radio &radio, Drivers::Node *nodes) {
+Coroutine control(Loop &loop, UsbDevice &device, Buffer &buffer, Ieee802154Radio &radio, Drivers::RadioNode *nodes) {
 	while (true) {
-		usb::Setup setup;
-
 		// wait for a control request (https://www.beyondlogic.org/usbnutshell/usb6.shtml)
-		co_await device.request(setup);
+		co_await device.untilRequest();
+		auto setup = device.getSetup();
 
 		// handle request
-		switch (setup.requestType) {
+		switch (setup.bmRequestType) {
 		case usb::RequestType::STANDARD_DEVICE_IN:
-			switch (setup.request) {
+			switch (setup.bRequest) {
 			case usb::Request::GET_DESCRIPTOR:
 				{
-					auto descriptorType = usb::DescriptorType(setup.value >> 8);
+					auto descriptorType = usb::DescriptorType(setup.wValue >> 8);
 					//int descriptorIndex = setup.value & 0xff;
 					switch (descriptorType) {
 					case usb::DescriptorType::DEVICE:
@@ -169,26 +169,29 @@ Coroutine control(Loop &loop, UsbDevice &device, Buffer &buffer, Ieee802154Radio
 			}
 			break;
 		case usb::RequestType::VENDOR_DEVICE_OUT:
-			switch (Ieee802154Radio::Request(setup.request)) {
-			case Ieee802154Radio::Request::START:
+			switch (setup.bRequest) {
+			case Ieee802154Radio::Request::OPEN:
+				//debug::setBlue();
 				device.acknowledge();
-				radio.start(setup.value);
+				radio.open(setup.wValue);
 				break;
-			case Ieee802154Radio::Request::STOP:
+			case Ieee802154Radio::Request::CLOSE:
 				device.acknowledge();
-				radio.stop();
+				radio.close();
 				break;
 			case Ieee802154Radio::Request::CONFIGURE:
 				{
+					//debug::setGreen();
+
 					// read uint32 and set as debug color
-					co_await buffer.read(setup.length);
-					if (setup.index >= 1 && setup.index <= NODE_COUNT && setup.length >= 14 && buffer.transferred() >= 14) {
+					co_await buffer.read(setup.wLength);
+					if (setup.wIndex >= 1 && setup.wIndex <= NODE_COUNT && setup.wLength >= 14 && buffer.size() >= 14) {
 						BufferReader r(buffer);
 						auto pan = r.u16L();
 						auto longAddress = r.u64L();
 						auto shortAddress = r.u16L();
 						auto filterFlags = r.e16L<Ieee802154Radio::FilterFlags>();
-						nodes[setup.index - 1].configure(pan, longAddress, shortAddress, filterFlags);
+						nodes[setup.wIndex - 1].configure(pan, longAddress, shortAddress, filterFlags);
 					}
 				}
 				break;
@@ -206,84 +209,92 @@ Coroutine control(Loop &loop, UsbDevice &device, Buffer &buffer, Ieee802154Radio
 Barrier<> barriers[NODE_COUNT][256];
 
 // receive from radio and send to usb host
-Coroutine receive(Drivers::Node &node, Drivers::Endpoint &endpoint) {
+Coroutine receive(Drivers::RadioNode &node, Drivers::UsbEndpoint &endpoint) {
 	Drivers::RadioBuffer radioBuffer(node);
 	Drivers::UsbBuffer usbBuffer(endpoint);
 	while (true) {
 		co_await radioBuffer.untilReady();
 		co_await usbBuffer.untilReady();
 		while (radioBuffer.ready() && usbBuffer.ready()) {
-
 			// receive from radio
+			debug::setGreen(false);
 			co_await radioBuffer.read();
-			int transferred = radioBuffer.transferred();
+			debug::setGreen(true);
+			int transferred = radioBuffer.size();
 
-			// check if packet has minimum length (2 bytes frame control and extra data)
-			if (transferred >= 2 + Ieee802154Radio::RECEIVE_EXTRA_LENGTH) {
+			// check if packet has minimum length of 2 bytes for frame control
+			if (transferred >= 2) {
 				// send to usb host
-				co_await usbBuffer.writeData(radioBuffer.data(), transferred); // IN
+				BufferWriter w(usbBuffer.data(), usbBuffer.capacity());
+				int headerSize = radioBuffer.headerSize();
+				w.u8(headerSize);
+				w.data(radioBuffer.headerData(), headerSize + transferred);
+				co_await usbBuffer.write(w); // IN
 			}
 		}
 	}
 }
 
 // receive from usb host and send to radio
-Coroutine send(Drivers::Node &node, Drivers::Endpoint &endpoint, int index) {
+Coroutine send(Drivers::Radio::Node &node, Drivers::UsbEndpoint &endpoint, int index) {
 	Drivers::RadioBuffer radioBuffer(node);
 	Drivers::UsbBuffer usbBuffer(endpoint);
 	while (true) {
+		co_await radioBuffer.untilReady();
 		co_await usbBuffer.untilReady();
-		while (usbBuffer.ready()) {
+		while (radioBuffer.ready() && usbBuffer.ready()) {
 			// receive from usb host
 			co_await usbBuffer.read(); // OUT
-			int transferred = usbBuffer.transferred();
+			auto data = usbBuffer.data();
+			int transferred = usbBuffer.size();
 
 			if (transferred == 1) {
 				// cancel by mac counter
-				uint8_t macCounter = usbBuffer[0];
+				uint8_t macCounter = data[0];
 				barriers[index][macCounter].doAll();
-			} else if (transferred >= 2 + Ieee802154Radio::SEND_EXTRA_LENGTH) {
-				debug::setRed(true);
+			} else {
+				int headerSize = data[0];
+				int size = transferred - 1 - headerSize;
+				if (size >= 2) {
+					// get mac counter to identify the packet
+					uint8_t macCounter = data[1 + headerSize + 2];
 
-				// get mac counter to identify the packet
-				uint8_t macCounter = usbBuffer[2];
+					// set header
+					radioBuffer.setHeader(data, headerSize);
 
-				// send over the air
-				int r = co_await select(radioBuffer.writeData(usbBuffer.data(), transferred), barriers[index][macCounter].wait());
-
-				if (r == 1) {
-					// send mac counter and number of transferred bytes back to usb host
-					usbBuffer[0] = macCounter;
-					usbBuffer[1] = radioBuffer.transferred();
-					co_await usbBuffer.write(2); // IN
+					// send over the air
+					debug::setRed(true);
+					int r = co_await select(radioBuffer.writeData(data + 1 + headerSize, size), barriers[index][macCounter].untilResumed());
+					if (r == 1) {
+						// send mac counter and number of transferred bytes back to usb host
+						usbBuffer[0] = macCounter;
+						usbBuffer[1] = radioBuffer.size();
+						co_await usbBuffer.write(2); // IN
+					}
+					debug::setRed(false);
 				}
-				debug::setRed(false);
 			}
 		}
 	}
 }
 
-Drivers drivers;
-
 int main(void) {
-	debug::init();
-
 	// handle control transfers from usb host
 	control(drivers.loop, drivers.device, drivers.controlBuffer, drivers.radio, drivers.nodes);
 
 	for (int index = 0; index < NODE_COUNT; ++index) {
-		for (int i = 0; i < 1; ++i) {
+		for (int i = 0; i < 8; ++i) {
 			receive(drivers.nodes[index], drivers.endpoints[index]);
 			send(drivers.nodes[index], drivers.endpoints[index], index);
 		}
 	}
 
-/*
+
 	// configure and start radio
 	drivers.nodes[0].configure(0, UINT64_C(0x0000133700001337), 1337,
 		Ieee802154Radio::FilterFlags::PASS_DEST_LONG | Ieee802154Radio::FilterFlags::PASS_DEST_SHORT | Ieee802154Radio::FilterFlags::HANDLE_ACK);
-	drivers.radio.start(15);
-*/
+	drivers.radio.open(15);
+
 
 	drivers.loop.run();
 }

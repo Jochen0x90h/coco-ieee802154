@@ -6,21 +6,26 @@
 
 using namespace coco;
 
-// drivers for SpiTest
+// drivers for RadioReceiveTest
 struct Drivers {
 	Loop_native loop;
 
+	using UsbHost = UsbHost_native;
+	using Radio = Ieee802154Radio_usb;
+
 	// usb
-	UsbHost_native host{loop};
-	UsbHost_native::Device device{host, [](const usb::DeviceDescriptor &deviceDescriptor) {
+	UsbHost host{loop};
+	UsbHost::Device device{host, [](const usb::DeviceDescriptor &deviceDescriptor) {
 		return deviceDescriptor.idVendor == 0x1915 && deviceDescriptor.idProduct == 0x1337;
 	}};
-	UsbHost_native::ControlBuffer controlBuffer{device, 32};
-	UsbHost_native::BulkEndpoint bulkEndpoint{device, 1};
-	UsbHost_native::BulkBuffer bulkBuffer{bulkEndpoint, Ieee802154Radio::PACKET_LENGTH};
+	UsbHost::ControlBuffer controlBuffer{32, device};
+	UsbHost::Endpoint bulkEndpoint{device, 1};
+	UsbHost::Buffer bulkBuffer{1 + Radio::BUFFER_SIZE + 1, bulkEndpoint};
 
 	// radio
-	Ieee802154Radio_usb radio{controlBuffer};
-	Ieee802154Radio_usb::Node node{radio, bulkEndpoint};
-	Ieee802154Radio_usb::Buffer radioBuffer{node, bulkBuffer};
+	Radio radio{controlBuffer};
+	Radio::Node node{radio, bulkEndpoint};
+	Radio::Buffer radioBuffer{node, bulkBuffer};
 };
+
+Drivers drivers;
