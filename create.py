@@ -14,10 +14,14 @@ file.close()
 
 # get version from git tag or branch
 # get tag
-version = subprocess.check_output("git tag --points-at HEAD", shell=True).decode().strip()
-if version == "":
-    # get branch
-    version = subprocess.check_output("git rev-parse --abbrev-ref HEAD", shell=True).decode().strip()
+try:
+    version = subprocess.check_output("git tag --points-at HEAD", shell=True).decode().strip()
+    if version == "":
+        # get branch
+        version = subprocess.check_output("git rev-parse --abbrev-ref HEAD", shell=True).decode().strip()
+except:
+    # not a git repository
+    version = "none"
 #print(f"Version: >{version}<")
 
 for preset in presets:

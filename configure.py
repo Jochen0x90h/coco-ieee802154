@@ -37,6 +37,15 @@ def addPreset(type, name):
         }
     )
 
+def addPresetWithConfig(type, name, config):
+    cmakePresets[type].append(
+        {
+            "name": name,
+            "configurePreset": name,
+            "configuration": config
+        }
+    )
+
 # iterate over presets
 for preset in presets:
     p = shlex.split(preset)
@@ -60,7 +69,7 @@ for preset in presets:
                 "description": f"({generator})",
                 "generator": generator,
                 "cacheVariables": {
-                    "CMAKE_POLICY_DEFAULT_CMP0077": "NEW",
+                    #"CMAKE_POLICY_DEFAULT_CMP0077": "NEW",
                     "CMAKE_POLICY_DEFAULT_CMP0091": "NEW",
                     "CMAKE_BUILD_TYPE": config,
                     "CMAKE_INSTALL_PREFIX": str(home / ".local")
@@ -70,8 +79,12 @@ for preset in presets:
                 "binaryDir": f"build/{name}"
             }
         )
-        addPreset("buildPresets", name)
-        addPreset("testPresets", name)
+        if "Visual Studio" in generator:
+            addPresetWithConfig("buildPresets", name, config)
+            addPresetWithConfig("testPresets", name, config)
+        else:
+            addPreset("buildPresets", name)
+            addPreset("testPresets", name)
 
 # save cmake presets to CMakeUserPresets.json
 file = open("CMakeUserPresets.json", "w")
