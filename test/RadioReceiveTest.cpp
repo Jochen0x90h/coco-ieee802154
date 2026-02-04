@@ -19,7 +19,9 @@ Coroutine receive(Loop &loop, Buffer &radioBuffer) {
             co_await radioBuffer.read();
             int transferred = radioBuffer.size();
 
-            debug::out << '(' << dec(transferred) << ") ";
+            auto &header = radioBuffer.header<Ieee802154Radio::ReceiveHeader>();
+            debug::out << dec(header.timestamp) << ' ' << dec(header.lqi);
+            debug::out << " (" << dec(transferred) << ") ";
             for (int i = 0; i < transferred; ++i) {
                 if (i != 0)
                     debug::out << ", ";

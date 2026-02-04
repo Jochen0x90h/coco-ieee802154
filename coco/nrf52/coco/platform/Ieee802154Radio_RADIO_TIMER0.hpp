@@ -13,6 +13,7 @@ namespace coco {
 /// @brief Implementation of IEEE 802.15.4 radio using RADIO and TIMER0.
 /// Supports multiple virtual nodes each with its own pan id and address. This can be used to use several networks and
 /// protocols at the same time.
+/// Timestamp resolution is 1us.
 ///
 /// Resources:
 ///   NRF_RADIO
@@ -110,9 +111,7 @@ public:
 
         Node &node_;
 
-        // space for length byte of send packets when no header is present
-        //uint8_t length;
-        uint8_t buffer_[BUFFER_SIZE];
+        alignas(4) uint8_t buffer_[BUFFER_SIZE];
 
         enum class Mode {
             // is in node.receiveTransfers

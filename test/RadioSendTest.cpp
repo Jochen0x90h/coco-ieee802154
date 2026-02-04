@@ -32,7 +32,7 @@ Coroutine send(Loop &loop, Buffer &radioBuffer) {
 
             // send packet over the air
             debug::out << "Send packet\n";
-            radioBuffer.header<Ieee802154Radio::SendFlags>() = Ieee802154Radio::SendFlags::NONE;
+            radioBuffer.header<Ieee802154Radio::SendHeader>() = {Ieee802154Radio::SendFlags::NONE};
             co_await radioBuffer.writeArray(packet);
             int transferred = radioBuffer.size();
 

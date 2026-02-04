@@ -666,9 +666,9 @@ void Ieee802154Radio_RADIO_TIMER0::RADIO_IRQHandler() {
         }
 
         // capture timestamp of received packet (CC[1] is currently unused)
-        if (RECEIVE_HEADER_SIZE >= 5) {
+        //if (RECEIVE_HEADER_SIZE >= 5) {
             NRF_TIMER0->TASKS_CAPTURE[1] = TRIGGER;
-        }
+        //}
 
         // check if a node is interested in this packet and wants to handle ack
         bool ack = false;
@@ -731,26 +731,26 @@ void Ieee802154Radio_RADIO_TIMER0::RADIO_IRQHandler() {
                 if (passThis) {
                     node.receiveBuffers_.pop([this, mac, size](Buffer &buffer) {
                         // set header
-                        auto header = buffer.header_;//data;
-                        //int headerSize = 1;
-
-                        // link quality indicator (LQI)
-                        header[0] = mac[size];
+                        ReceiveHeader &header = *reinterpret_cast<ReceiveHeader *>(buffer.header_);
 
                         // timestamp
-                        if (RECEIVE_HEADER_SIZE >= 5) {
+                        header.timestamp = NRF_TIMER0->CC[1];
+
+                        // link quality indicator (LQI)
+                        header.lqi = mac[size];
+
+                        // timestamp
+                        /*if (RECEIVE_HEADER_SIZE >= 5) {
                             uint32_t timestamp = NRF_TIMER0->CC[1];
                             header[1] = timestamp;
                             header[2] = timestamp >> 8;
                             header[3] = timestamp >> 16;
                             header[4] = timestamp >> 24;
-                            //headerSize = 5;
-                        }
-                        //buffer.p.headerSize = headerSize;
+                        }*/
 
                         // copy payload to buffer
-                        buffer.size_ = /*headerSize +*/ size;
-                        std::copy(mac, mac + size, buffer.data_);// + headerSize);
+                        buffer.size_ = size;
+                        std::copy(mac, mac + size, buffer.data_);
 
                         // pass buffer to event loop so that the main application gets notified
                         loop_.push(buffer);

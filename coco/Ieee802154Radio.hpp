@@ -3,6 +3,7 @@
 #include <coco/BufferDevice.hpp>
 #include <coco/Coroutine.hpp>
 #include <coco/enum.hpp>
+#include <coco/platform/compiler.hpp>
 #include <algorithm>
 #include <cstdint>
 
@@ -54,6 +55,39 @@ public:
         AWAIT_DATA_REQUEST = 1,
     };
 
+    // send header
+    struct SendHeader {
+        SendFlags flags;
+    };
+
+    // receive header
+    COCO_PACK_BEGIN struct ReceiveHeader {
+        uint32_t timestamp; // timestamp when the last byte was received
+        uint8_t lqi; // link quality indicator
+    } COCO_PACK_END
+
+    /// @brief Maximum payload size without leading length byte and trailing crc
+    ///
+    static constexpr int MAX_PAYLOAD_SIZE = 125;
+
+    /// @brief Size of receive header: One byte for link quality indicator (LQI) and 4 bytes for timestamp
+    ///
+    //static constexpr int RECEIVE_HEADER_SIZE = 1 + 4;
+
+    /// @brief Size of send header: One byte for send flags or length
+    ///
+    //static constexpr int SEND_HEADER_SIZE = 1;
+
+    /// @brief Header size of radio buffers
+    ///
+    //static constexpr int HEADER_SIZE = std::max(RECEIVE_HEADER_SIZE, SEND_HEADER_SIZE);
+    static constexpr int HEADER_SIZE = std::max(sizeof(SendHeader), sizeof(ReceiveHeader));
+
+    /// @brief Size of radio buffer
+    ///
+    static constexpr int BUFFER_SIZE = HEADER_SIZE + MAX_PAYLOAD_SIZE;
+
+
     /// @brief Request IDs for remote controlling the radio, e.g. via usb (struct Request only serves as namespace)
     ///
     struct Request {
@@ -68,26 +102,6 @@ public:
         /// Configure a virtual node
         static constexpr uint8_t CONFIGURE = 3;
     };
-
-    /// @brief Maximum payload size without leading length byte and trailing crc
-    ///
-    static constexpr int MAX_PAYLOAD_SIZE = 125;
-
-    /// @brief Size of receive header: One byte for link quality indicator (LQI) and 4 bytes for timestamp
-    ///
-    static constexpr int RECEIVE_HEADER_SIZE = 1 + 4;
-
-    /// @brief Size of send header: One byte for send flags or length
-    ///
-    static constexpr int SEND_HEADER_SIZE = 1;
-
-    /// @brief Header size of radio buffers
-    ///
-    static constexpr int HEADER_SIZE = std::max(RECEIVE_HEADER_SIZE, SEND_HEADER_SIZE);
-
-    /// @brief Size of radio buffer
-    ///
-    static constexpr int BUFFER_SIZE = HEADER_SIZE + MAX_PAYLOAD_SIZE;
 
 
     Ieee802154Radio(State state) : Device(state) {}
