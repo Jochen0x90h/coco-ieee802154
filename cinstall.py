@@ -1,8 +1,10 @@
-# Configure the project for use in an IDE that supports CMakeUserPresets.json
+# Calls "conan install" for all presets in cpresets.txt
+# Also creates a CMakeUserPresets.json which is supported by IDEs such as VSCode
 #
 # usage:
-# 1. Copy presets.txt from coco/support/conan/[windows] to project root (next to this file) and adjust to own needs
-# 2. python configure.py
+# 1: Copy cpresets.txt containing a list of presets from support/conan/[operating system] to project root (next to this file)
+# 2: Optional: Open cpresets.txt in an editor and adjust to own needs
+# 3: $ python cinstall.py
 #
 
 import sys
@@ -13,10 +15,11 @@ import subprocess
 
 
 # configuration
-home = Path.home()
+installPrefix = str(Path.home() / ".local")
+
 
 # read presets from presets.txt
-file = open('presets.txt', 'r')
+file = open('cpresets.txt', 'r')
 presets = file.readlines()
 file.close()
 
@@ -60,7 +63,8 @@ for preset in presets:
             name = f"{platform}-{config}"
 
         # install dependencies using conan
-        subprocess.run(f"conan install -pr:b default -pr:h {profile} -b missing -o:a platform={platform} -of build/{name} .", shell=True)
+        print(f"*** Installing dependencies for {profile} {platform} ***")
+        subprocess.run(f"conan install -pr:b default -pr:h {profile} -b missing -o:a *:platform={platform} -of build/{name} .", shell=True)
 
         # create cmake presets
         cmakePresets["configurePresets"].append(
@@ -72,9 +76,8 @@ for preset in presets:
                     #"CMAKE_POLICY_DEFAULT_CMP0077": "NEW",
                     "CMAKE_POLICY_DEFAULT_CMP0091": "NEW",
                     "CMAKE_BUILD_TYPE": config,
-                    "CMAKE_INSTALL_PREFIX": str(home / ".local")
+                    "CMAKE_INSTALL_PREFIX": installPrefix
                 },
-                #"toolchainFile": str(os.getcwd() / f"build/{name}/conan_toolchain.cmake"),
                 "toolchainFile": f"build/{name}/conan_toolchain.cmake",
                 "binaryDir": f"build/{name}"
             }
