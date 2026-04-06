@@ -33,11 +33,11 @@ Coroutine send(Loop &loop, Buffer &radioBuffer) {
             // send packet over the air
             debug::out << "Send packet\n";
             radioBuffer.header<Ieee802154Radio::SendHeader>() = {Ieee802154Radio::SendFlags::NONE};
-            co_await radioBuffer.writeArray(packet);
+            co_await radioBuffer.write(packet);
             int transferred = radioBuffer.size();
 
             // check for success
-            bool success = transferred > 0;
+            bool success = !radioBuffer.error();//transferred > 0;
             debug::out << (success ? "OK\n" : "Failed\n");
 #ifndef NATIVE
             debug::set(success ? debug::GREEN : debug::RED);
@@ -68,7 +68,7 @@ Coroutine reply(Loop &loop, Buffer &radioBuffer) {
 
             // reply
             debug::setRed(true);
-            co_await radioBuffer.writeArray(replyPacket);
+            co_await radioBuffer.write(replyPacket);
             debug::setRed(false);
         }
     }

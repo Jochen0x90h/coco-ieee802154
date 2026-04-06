@@ -28,12 +28,12 @@ void Ieee802154Radio_usb::close() {
     controlBarrier_.doFirst();
 
     // set state
-    st.set(State::DISABLED);
+    state_ = State::DISABLED;
 
     // iterate over nodes
     for (auto &node : nodes_) {
         // set state
-        node.st.set(State::DISABLED);
+        node.state_ = State::DISABLED;
 
         // disable buffers
         for (auto &buffer : node.buffers_) {
@@ -41,11 +41,11 @@ void Ieee802154Radio_usb::close() {
         }
 
         // resume all coroutines waiting for state change
-        node.st.notify(Device::Events::ENTER_CLOSING | Device::Events::ENTER_DISABLED);
+        node.notify(Device::Events::ENTER_CLOSING | Device::Events::ENTER_DISABLED);
     }
 
     // resume all coroutines waiting for state change
-    st.notify(Device::Events::ENTER_CLOSING | Device::Events::ENTER_DISABLED);
+    notify(Device::Events::ENTER_CLOSING | Device::Events::ENTER_DISABLED);
 }
 
 void Ieee802154Radio_usb::open(int channel) {
@@ -56,21 +56,21 @@ void Ieee802154Radio_usb::open(int channel) {
     controlBarrier_.doFirst();
 
     // set state
-    st.set(State::READY);
+    state_ = State::READY;
 
     // iterate over nodes
     for (auto &node : nodes_) {
         // set state
-        node.st.set(State::READY);
+        node.state_ = State::READY;
 
         for (auto &buffer : node.buffers_) {
-            buffer.setReady(0);
+            buffer.setReady();
         }
 
-        node.st.notify(Device::Events::ENTER_OPENING | Device::Events::ENTER_READY);
+        node.notify(Device::Events::ENTER_OPENING | Device::Events::ENTER_READY);
     }
 
-    st.notify(Device::Events::ENTER_OPENING | Device::Events::ENTER_READY);
+    notify(Device::Events::ENTER_OPENING | Device::Events::ENTER_READY);
 }
 
 Coroutine Ieee802154Radio_usb::control() {
@@ -102,12 +102,12 @@ Coroutine Ieee802154Radio_usb::control() {
                 for (auto &node : nodes_) {
                     if (node.configureFlag_) {
                         node.configureFlag_ = false;
-                        BufferWriter w(buffer.data(), buffer.capacity());
+                        BufferWriter w(buffer.clear());//.data(), buffer.capacity());
                         w.u16L(node.pan_);
                         w.u64L(node.longAddress_);
                         w.u16L(node.shortAddress_);
                         w.e16L(node.filterFlags_);
-                        size = w - buffer.begin();
+                        size = buffer.size();//w - buffer.begin();
                         buffer.header<usb::Setup>() = {usb::RequestType::VENDOR_DEVICE_OUT, uint8_t(Request::CONFIGURE), 0, index, uint16_t(size)};
                         break;
                     }
@@ -123,7 +123,7 @@ Coroutine Ieee802154Radio_usb::control() {
 // Ieee802154Radio_usb::Node
 
 Ieee802154Radio_usb::Node::Node(Ieee802154Radio_usb &device, BufferDevice &wrappedDevice)
-    : Ieee802154Radio::Node(device.st.state)
+    : Ieee802154Radio::Node(device.state_)
     , device_(device), wrappedDevice_(wrappedDevice)
 {
     device.nodes_.add(*this);
@@ -166,18 +166,21 @@ Ieee802154Radio_usb::Buffer::Buffer(Node &node, coco::Buffer &wrappedBuffer)
 Ieee802154Radio_usb::Buffer::~Buffer() {
 }
 
-bool Ieee802154Radio_usb::Buffer::start(Op op) {
-    if (st.state != State::READY) {
-        assert(st.state != State::BUSY);
+bool Ieee802154Radio_usb::Buffer::start() {
+    if (state_ != State::READY) {
+        assert(false);
+        setError(std::errc::resource_unavailable_try_again);
+        return false;
+    }
+    if ((op_ & Op::READ_WRITE) == 0 || size_ == 0) {
+        setSuccess();
         return false;
     }
 
-    // check if READ or WRITE flag is set
-    assert((op & Op::READ_WRITE) != 0);
-
     const int headerSize = Ieee802154Radio::HEADER_SIZE;
-    op_ = op;
-    if ((op & Op::WRITE) == 0) {
+    //op_ = op;
+    steps_ = 1;
+    if ((op_ & Op::WRITE) == 0) {
         // read
     } else {
         // write
@@ -190,37 +193,42 @@ bool Ieee802154Radio_usb::Buffer::start(Op op) {
     }
 
     // start USB transfer
-    bool result = wrappedBuffer_.start(op);
+    bool result = wrappedBuffer_.start(op_);
 
     // in case setReady() was called from listen(), the state change is missed when the app call start() again
-    if (result && st.state == Buffer::State::READY)
+    if (result && state_ == Buffer::State::READY)
         setBusy();
 
     return result;
 }
 
 bool Ieee802154Radio_usb::Buffer::cancel() {
-    if (st.state != State::BUSY)
+    if (state_ != State::BUSY)
         return false;
 
     // check if already cancelled
-    if ((op_ & Op::CANCEL) != 0)
-        return true;
+    //if ((op_ & Op::CANCEL) != 0)
+    //    return true;
 
-    const int headerSize = Ieee802154Radio::HEADER_SIZE;
+    if (steps_ != 0) {
+        // indicate cancel
+        steps_ = 0;
 
-    // set cancel indicator
-    op_ |= Op::CANCEL;
+        const int headerSize = Ieee802154Radio::HEADER_SIZE;
 
-    // cancel the USB transfer
-    bool result = wrappedBuffer_.cancel();
+        // set cancel indicator
+        //op_ |= Op::CANCEL;
 
-    // if cancel() failed, the USB transfer was already finished
-    if (!result && (op_ & Op::WRITE) != 0) {
-        // cancel write by sending mac counter
-        uint8_t macCounter = wrappedBuffer_[headerSize + 2];
-        wrappedBuffer_[0] = macCounter;
-        wrappedBuffer_.startWrite(1);
+        // cancel the USB transfer
+        bool result = wrappedBuffer_.cancel();
+
+        // if cancel() failed, the USB transfer was already started
+        if (!result && (op_ & Op::WRITE) != 0) {
+            // therefore cancel write by sending mac counter
+            uint8_t macCounter = wrappedBuffer_[headerSize + 2];
+            wrappedBuffer_[0] = macCounter;
+            wrappedBuffer_.startWrite(1);
+        }
     }
 
     return true;
@@ -238,7 +246,7 @@ Coroutine Ieee802154Radio_usb::Buffer::listen() {
             auto data = wrappedBuffer_.data();
             int transferred = wrappedBuffer_.size();
 
-            if ((op_ & Op::CANCEL) != 0) {
+            if (steps_ == 0) {//(op_ & Op::CANCEL) != 0) {
                 // cancelled (cancel() was called)
                 if ((op_ & Op::WRITE) != 0) {
                     // cancel write operation by sending the mac counter
@@ -247,10 +255,11 @@ Coroutine Ieee802154Radio_usb::Buffer::listen() {
                     wrappedBuffer_.startWrite(1);
 
                     // clear write flag so that cancel finishes when buffer becomes ready
-                    op_ = Op::CANCEL;
+                    op_ = Op::NONE;//CANCEL;
                 } else {
                     // cancel operation has finished
-                    setReady(0);
+                    setError(std::errc::operation_canceled);
+                    setReady();
                 }
             } else if ((op_ & Op::WRITE) == 0) {
                 // read: received data from the radio
@@ -266,8 +275,10 @@ Coroutine Ieee802154Radio_usb::Buffer::listen() {
                             if (buffer[2] == macCounter) {
                                 buffer.remove2();
 
+                                buffer.setSuccess(radioTransferred);
+
                                 // notify application that sent buffer is ready
-                                buffer.setReady(radioTransferred);
+                                buffer.setReady();
                                 break;
                             }
                         }
@@ -277,7 +288,8 @@ Coroutine Ieee802154Radio_usb::Buffer::listen() {
                     wrappedBuffer_.start(op_);
                 } else {
                     // received a packet
-                    setReady(transferred - headerSize);
+                    setSuccess(transferred - headerSize);
+                    setReady();
                 }
             } else {
                 // write: do nothing and wait for result

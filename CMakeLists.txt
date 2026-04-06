@@ -1,11 +1,10 @@
-cmake_minimum_required(VERSION 3.19)
+cmake_minimum_required(VERSION 3.25)
 
 # set project
-project(coco-ieee802154)
+project(coco-ieee802154 CXX)
 
 # configure languages
-enable_language(CXX)
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 
 # build type
 message("*** Type: ${CMAKE_BUILD_TYPE}") #${CMAKE_CONFIGURATION_TYPES}")

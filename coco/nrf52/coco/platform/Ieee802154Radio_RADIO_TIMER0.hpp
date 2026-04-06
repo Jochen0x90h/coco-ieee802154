@@ -88,10 +88,10 @@ public:
         IntrusiveList<Buffer> buffers_;
 
         // list of active receive buffers
-        InterruptQueue<Buffer> receiveBuffers_;
+        InterruptQueue2<Buffer> receiveBuffers_;
 
         // list of buffers that can be sent on data request
-        InterruptQueue<Buffer> requestBuffers_;
+        InterruptQueue2<Buffer> requestBuffers_;
     };
 
     /// @brief Buffer for transferring data over the radio.
@@ -103,7 +103,7 @@ public:
         ~Buffer() override;
 
         // Buffer methods
-        bool start(Op op) override;
+        bool start() override;
         bool cancel() override;
 
     protected:
@@ -155,7 +155,7 @@ protected:
     void startSendAck();
 
     // finish send operation
-    void finishSend(bool success);
+    void finishSend(std::errc error = {});
 
     // interrupt handlers
     void handleRadio();
@@ -177,7 +177,7 @@ protected:
     uint32_t ifsDuration_ = 0;
 
     // list of active send transfers
-    InterruptQueue<Buffer> sendBuffers_;
+    InterruptQueue2<Buffer> sendBuffers_;
     uint8_t ackPacket_[4] = {5, 0x02, 0x00, 0};
 
     enum SendState : uint8_t {
@@ -210,7 +210,7 @@ protected:
         RECEIVE,
         SEND_ACK,
         //SEND_REQUESTED,
-        ON_SENT
+        FINISH_SEND
     };
     EndAction endAction_;
 };

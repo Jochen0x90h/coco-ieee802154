@@ -1,5 +1,6 @@
 #include "Ieee802154Radio_RADIO_TIMER0.hpp"
-//#include <coco/debug.hpp>
+#include <coco/convert.hpp>
+#include <coco/debug.hpp>
 #include <coco/ieee802154.hpp>
 #include <coco/platform/nvic.hpp>
 
@@ -161,12 +162,12 @@ void Ieee802154Radio_RADIO_TIMER0::close() {
     }
 
     // set state
-    st.set(State::DISABLED);
+    state_ = State::DISABLED;
 
     // set state of buffers to disabled and resume all coroutines waiting for a state change
     for (auto &node : nodes_) {
         // set state
-        node.st.set(State::DISABLED);
+        state_ = State::DISABLED;
 
         // disable buffers
         for (auto &buffer : node.buffers_) {
@@ -174,11 +175,11 @@ void Ieee802154Radio_RADIO_TIMER0::close() {
         }
 
         // set state and resume all coroutines waiting for state change
-        node.st.notify(Device::Events::ENTER_CLOSING | Device::Events::ENTER_DISABLED);
+        node.notify(Device::Events::ENTER_CLOSING | Device::Events::ENTER_DISABLED);
     }
 
     // set state and resume all coroutines waiting for state change
-    st.notify(Device::Events::ENTER_CLOSING | Device::Events::ENTER_DISABLED);
+    notify(Device::Events::ENTER_CLOSING | Device::Events::ENTER_DISABLED);
 }
 
 void Ieee802154Radio_RADIO_TIMER0::open(int channel) {
@@ -186,7 +187,7 @@ void Ieee802154Radio_RADIO_TIMER0::open(int channel) {
     assert(channel >= 11 && channel <= 26);
 
     // stop if currently active
-    if (st.state == State::READY)
+    if (state_ == State::READY)
         close();
 
     // set channel
@@ -210,30 +211,30 @@ void Ieee802154Radio_RADIO_TIMER0::open(int channel) {
     }
 
     // set state
-    st.set(State::READY);
+    state_ = State::READY;
 
     // set state of buffers to ready and resume all coroutines waiting for a state change
     for (auto &node : nodes_) {
         // set state
-        node.st.set(State::READY);
+        node.state_ = State::READY;
 
         for (auto &buffer : node.buffers_) {
-            buffer.setReady(0);
+            buffer.setReady();
         }
 
         // set state and resume all coroutines waiting for state change
-        node.st.notify(Device::Events::ENTER_OPENING | Device::Events::ENTER_READY);
+        node.notify(Device::Events::ENTER_OPENING | Device::Events::ENTER_READY);
     }
 
     // set state and resume all coroutines waiting for state change
-    st.notify(Device::Events::ENTER_OPENING | Device::Events::ENTER_READY);
+    notify(Device::Events::ENTER_OPENING | Device::Events::ENTER_READY);
 }
 
 
 // Node
 
 Ieee802154Radio_RADIO_TIMER0::Node::Node(Ieee802154Radio_RADIO_TIMER0 &device)
-    : Ieee802154Radio::Node(device.st.state)
+    : Ieee802154Radio::Node(device.state_)
     , device_(device)
 {
     device.nodes_.add(*this);
@@ -312,7 +313,7 @@ bool Ieee802154Radio_RADIO_TIMER0::Node::filter(uint8_t const *mac) const {
 
 bool Ieee802154Radio_RADIO_TIMER0::Node::request(uint16_t panId, const uint8_t *destinationAddress, int addressLength) {
     // method is called only from interrupt handler, therefore no locking required
-    bool result = requestBuffers_.remove([this, panId, destinationAddress, addressLength](Buffer &buffer) {
+    /*bool result = requestBuffers_.remove([this, panId, destinationAddress, addressLength](Buffer &buffer) {
         auto mac = buffer.data_;
 
         // check pan id
@@ -339,15 +340,47 @@ bool Ieee802154Radio_RADIO_TIMER0::Node::request(uint16_t panId, const uint8_t *
         // move buffer to sendBuffers
         device_.sendBuffers_.push(buffer);
         return true;
-    });
-    return result;
+    });*/
+    auto result = requestBuffers_.removeIf(
+        [this, panId, destinationAddress, addressLength](Buffer &buffer, int) {
+            auto mac = buffer.data_;
+
+            // check pan id
+            if (panId != (mac[3] | (mac[4] << 8)))
+                return false;
+
+            // frame control
+            auto frameControl = ieee::FrameControl(mac[0] | (mac[1] << 8))
+                & (ieee::FrameControl::SEQUENCE_NUMBER_SUPPRESSION | ieee::FrameControl::DESTINATION_ADDRESSING_MASK);
+
+            // check destination addressing
+            if (addressLength == 2) {
+                if (frameControl != ieee::FrameControl::DESTINATION_ADDRESSING_SHORT)
+                    return false;
+            } else {
+                if (frameControl != ieee::FrameControl::DESTINATION_ADDRESSING_LONG)
+                    return false;
+            }
+
+            // check destination address
+            if (!std::equal(destinationAddress, destinationAddress + addressLength, mac + 5))
+                return false;
+
+            return true;
+        },
+        [this](Buffer &buffer) {
+            // move buffer to sendBuffers
+            device_.sendBuffers_.push(buffer);
+        });
+
+    return result != nullptr;
 }
 
 
 // Buffer
 
 Ieee802154Radio_RADIO_TIMER0::Buffer::Buffer(Node &node)
-    : coco::Buffer(buffer_, HEADER_SIZE, 0, MAX_PAYLOAD_SIZE, node.st.state)
+    : coco::Buffer(buffer_, HEADER_SIZE, MAX_PAYLOAD_SIZE, node.state_)
     , node_(node)
 {
     node.buffers_.add(*this);
@@ -356,54 +389,24 @@ Ieee802154Radio_RADIO_TIMER0::Buffer::Buffer(Node &node)
 Ieee802154Radio_RADIO_TIMER0::Buffer::~Buffer() {
 }
 
-bool Ieee802154Radio_RADIO_TIMER0::Buffer::cancel() {
-    if (st.state != State::BUSY)
-        return false;
-    auto &node = node_;
-    auto &device = node.device_;
-
-    bool success = true;
-    {
-        nvic::Guard2 guard(RADIO_IRQn, TIMER0_IRQn);
-        //lock();
-        switch (mode_) {
-        case Mode::RECEIVE:
-            // remove from pending receive transfers
-            node.receiveBuffers_.remove(*this);
-            break;
-        case Mode::REQUEST:
-            // remove from pending request buffers
-            node.requestBuffers_.remove(*this);
-            break;
-        case Mode::SEND:
-            // remove from pending send transfers if not yet started, otherwise complete normally
-            success = device.sendBuffers_.remove(*this, false);
-            break;
-        }
-        //unlock();
-    }
-    if (success)
-        setReady(0);
-
-    return true;
-}
-
-bool Ieee802154Radio_RADIO_TIMER0::Buffer::start(Op op) {
-    if (st.state != State::READY || (op & Op::READ_WRITE) == 0 || size_ == 0) {
-        assert(stat != State::BUSY);
+bool Ieee802154Radio_RADIO_TIMER0::Buffer::start() {
+    if (state_ != State::READY) {
+        assert(false);
+        setError(std::errc::resource_unavailable_try_again);
         return false;
     }
-
-    // check if READ or WRITE flag is set
-    assert((op & Op::READ_WRITE) != 0);
-
+    if ((op_ & Op::READ_WRITE) == 0 || size_ == 0) {
+        setSuccess();
+        return false;
+    }
+    //debug::out << ((op_ & Op::WRITE) != 0 ? "write" : "read") << ' ' << dec(size_) << '\n';
     auto &node = node_;
     auto &device = node.device_;
 
     {
         nvic::Guard2 guard(RADIO_IRQn, TIMER0_IRQn);
 
-        if ((op & Op::WRITE) == 0) {
+        if ((op_ & Op::WRITE) == 0) {
             // receive
             node.receiveBuffers_.push(*this);
             mode_ = Mode::RECEIVE;
@@ -433,6 +436,42 @@ bool Ieee802154Radio_RADIO_TIMER0::Buffer::start(Op op) {
     return true;
 }
 
+bool Ieee802154Radio_RADIO_TIMER0::Buffer::cancel() {
+    if (state_ != State::BUSY)
+        return false;
+    auto &node = node_;
+    auto &device = node.device_;
+
+    bool success = true;
+    {
+        nvic::Guard2 guard(RADIO_IRQn, TIMER0_IRQn);
+        switch (mode_) {
+        case Mode::RECEIVE:
+            // remove from pending receive transfers
+            node.receiveBuffers_.remove(*this);
+            break;
+        case Mode::REQUEST:
+            // remove from pending request buffers
+            node.requestBuffers_.remove(*this);
+            break;
+        case Mode::SEND:
+            // remove from pending send transfers if not yet started, otherwise complete normally
+            //success = device.sendBuffers_.remove(*this, false);
+            success = device.sendBuffers_.removeIf(
+                [this](Buffer &buffer, int index) {
+                    return index > 0 && &buffer == this;
+                }) != nullptr;
+            break;
+        }
+    }
+    if (success) {
+        setError(std::errc::operation_canceled);
+        setReady();
+    }
+
+    return true;
+}
+
 void Ieee802154Radio_RADIO_TIMER0::Buffer::handle() {
     setReady();
 }
@@ -451,9 +490,11 @@ void Ieee802154Radio_RADIO_TIMER0::startReceive() {
 
 void Ieee802154Radio_RADIO_TIMER0::selectForSend() {
     // select next send buffer
-    Buffer *buffer = sendBuffers_.frontOrNull();
-    if (buffer != nullptr)
-        prepareForSend(*buffer);
+    if (!sendBuffers_.empty())
+        prepareForSend(sendBuffers_.front());
+    //Buffer *buffer = sendBuffers_.frontOrNull();
+    //if (buffer != nullptr)
+    //    prepareForSend(*buffer);
 }
 
 void Ieee802154Radio_RADIO_TIMER0::prepareForSend(Buffer &buffer) {
@@ -493,7 +534,7 @@ void Ieee802154Radio_RADIO_TIMER0::backoff() {
     // fail when maximum backoff count is reached
     if (backoffCount_ >= maxBackoffCount) {
 //debug::set(debug::CYAN);
-        finishSend(false);
+        finishSend(std::errc::resource_unavailable_try_again);
 
         // check if more to send
         selectForSend();
@@ -519,6 +560,8 @@ void Ieee802154Radio_RADIO_TIMER0::backoff() {
 }
 
 void Ieee802154Radio_RADIO_TIMER0::startClearChannelAssessment() {
+    //debug::out << "start CCA\n";
+
     // shortcut: stop receiving and enable sender if channel is clear
     NRF_RADIO->SHORTS = N(RADIO_SHORTS_CCAIDLE_STOP, Enabled)
         | N(RADIO_SHORTS_CCAIDLE_TXEN, Enabled);
@@ -531,7 +574,7 @@ void Ieee802154Radio_RADIO_TIMER0::startClearChannelAssessment() {
 
 void Ieee802154Radio_RADIO_TIMER0::startSend() {
     // handle sent packet on END event
-    endAction_ = EndAction::ON_SENT;
+    endAction_ = EndAction::FINISH_SEND;
 
     auto &buffer =  sendBuffers_.front();
     auto packet = buffer.data_ - 1; // one byte before paylaod for length (overwrites last byte of header)
@@ -542,6 +585,8 @@ void Ieee802154Radio_RADIO_TIMER0::startSend() {
 
     // determine inter frame spacing duration
     ifsDuration_ = length <= maxSifsLength ? minSifsDuration : minLifsDuration;
+
+    //debug::out << "startSend " << dec(length) << " ifs " << dec(ifsDuration_) << '\n';
 
     // start send operation
     NRF_RADIO->PACKETPTR = uintptr_t(packet);
@@ -560,13 +605,17 @@ void Ieee802154Radio_RADIO_TIMER0::startSendAck() {
     // -> END
 }
 
-void Ieee802154Radio_RADIO_TIMER0::finishSend(bool success) {
-    sendBuffers_.pop([this, success](Buffer &buffer) {
-        if (!success)
-            buffer.size_ = 0;// buffer.p.headerSize;
-        loop_.push(buffer);
-        return true;
-    });
+void Ieee802154Radio_RADIO_TIMER0::finishSend(std::errc error) {
+    //debug::out << "finishSend " << dec(error) << '\n';
+    sendBuffers_.pop(
+        [this, error](Buffer &buffer) {
+            if (error != std::errc{}) {
+                buffer.setError(error);
+            } else {
+                buffer.setSuccess();
+            }
+            loop_.push(buffer);
+        });
 
     // sender is idle again
     sendState_ = SendState::IDLE;
@@ -657,7 +706,7 @@ void Ieee802154Radio_RADIO_TIMER0::RADIO_IRQHandler() {
 
                     // set state of sent packet to success, send state becomes idle
     //debug::set(debug::YELLOW);
-                    finishSend(true);
+                    finishSend();
 
                     // check if more to send
                     selectForSend();
@@ -729,33 +778,25 @@ void Ieee802154Radio_RADIO_TIMER0::RADIO_IRQHandler() {
                     }
                 }
                 if (passThis) {
-                    node.receiveBuffers_.pop([this, mac, size](Buffer &buffer) {
-                        // set header
-                        ReceiveHeader &header = *reinterpret_cast<ReceiveHeader *>(buffer.header_);
+                    node.receiveBuffers_.pop(
+                        [this, mac, size](Buffer &buffer) {
+                            // set header
+                            ReceiveHeader &header = *reinterpret_cast<ReceiveHeader *>(buffer.header_);
 
-                        // timestamp
-                        header.timestamp = NRF_TIMER0->CC[1];
+                            // timestamp
+                            header.timestamp = NRF_TIMER0->CC[1];
 
-                        // link quality indicator (LQI)
-                        header.lqi = mac[size];
+                            // link quality indicator (LQI)
+                            header.lqi = mac[size];
 
-                        // timestamp
-                        /*if (RECEIVE_HEADER_SIZE >= 5) {
-                            uint32_t timestamp = NRF_TIMER0->CC[1];
-                            header[1] = timestamp;
-                            header[2] = timestamp >> 8;
-                            header[3] = timestamp >> 16;
-                            header[4] = timestamp >> 24;
-                        }*/
+                            // copy payload to buffer
+                            buffer.size_ = size;
+                            std::copy(mac, mac + size, buffer.data_);
 
-                        // copy payload to buffer
-                        buffer.size_ = size;
-                        std::copy(mac, mac + size, buffer.data_);
-
-                        // pass buffer to event loop so that the main application gets notified
-                        loop_.push(buffer);
-                        return true;
-                    });
+                            // pass buffer to event loop so that the main application gets notified
+                            loop_.push(buffer);
+                            //return true;
+                        });
                 }
             }
             //listening |= !node.receiveBuffers.empty();
@@ -817,7 +858,7 @@ void Ieee802154Radio_RADIO_TIMER0::RADIO_IRQHandler() {
 
             // now wait for timeout
             break;
-        case EndAction::ON_SENT:
+        case EndAction::FINISH_SEND:
             // sent a packet, is either finished or we need to wait for ACK
             {
                 // check if we have to wait for an ACK
@@ -833,7 +874,7 @@ void Ieee802154Radio_RADIO_TIMER0::RADIO_IRQHandler() {
                 } else {
                     // no: set state of sent packet to success, send state becomes idle
     //debug::set(debug::BLUE);
-                    finishSend(true);
+                    finishSend();
                 }
             }
             break;
@@ -885,7 +926,7 @@ void Ieee802154Radio_RADIO_TIMER0::TIMER0_IRQHandler() {
         } else {
 //debug::set(debug::RED);
             // sent packet was not acknowledged: set result to failed, send state becomes idle
-            finishSend(false);
+            finishSend(std::errc::timed_out);
 
             // todo: disable receiver (and set receiverenabled_ = false) after a timeout when no node listens
 

@@ -71,7 +71,7 @@ public:
         Buffer(Node &node, coco::Buffer &wrappedBuffer);
         ~Buffer() override;
 
-        bool start(Op op) override;
+        bool start() override;
         bool cancel() override;
 
     protected:
@@ -83,13 +83,14 @@ public:
         // wrapped USB buffer
         coco::Buffer &wrappedBuffer_;
 
-        Op op_ = Op::READ;
+        //Op op_ = Op::READ;
     };
 
 protected:
     Coroutine control();
 
-    using Device::st;
+    //using Device::st;
+    using Device::state_;
 
     // buffer for control transfers (stat, stop, configure)
     coco::Buffer &controlBuffer_;

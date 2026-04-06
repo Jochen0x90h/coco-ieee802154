@@ -30,6 +30,7 @@ enum class FrameControl : uint16_t {
     // request an ACK
     ACKNOWLEDGE_REQUEST = 1 << 5,
 
+    // source PAN is not present if same as destination PAN
     PAN_ID_COMPRESSION = 1 << 6,
 
     SEQUENCE_NUMBER_SUPPRESSION = 1 << 8,

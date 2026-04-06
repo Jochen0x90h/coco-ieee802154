@@ -202,13 +202,10 @@ Coroutine receive(Drivers::RadioNode &node, Drivers::UsbEndpoint &endpoint) {
             // check if packet is valid (has minimum length of 2 bytes for frame control)
             if (transferred >= 2) {
                 // send to usb host
-                BufferWriter w(usbBuffer.all());
+                BufferWriter w(usbBuffer.clear());
                 w.data(radioBuffer.headerData(), radioBuffer.headerCapacity());
                 w.data(radioBuffer.data(), radioBuffer.size());
-                //int headerSize = radioBuffer.headerSize();
-                //w.u8(headerSize);
-                //w.data(radioBuffer.headerData(), headerSize + transferred);
-                co_await usbBuffer.write(w); // IN
+                co_await usbBuffer.write(); // IN
             }
         }
     }
@@ -245,7 +242,7 @@ Coroutine send(Drivers::Radio::Node &node, Drivers::UsbEndpoint &endpoint, int i
 
                     // send over the air
                     debug::setRed(true);
-                    int s = co_await select(radioBuffer.writeData(data, size), barriers[index][macCounter].untilResumed());
+                    int s = co_await select(radioBuffer.write(data, size), barriers[index][macCounter].untilResumed());
                     if (s == 1) {
                         // send mac counter and number of transferred bytes back to usb host
                         usbBuffer[0] = macCounter;
