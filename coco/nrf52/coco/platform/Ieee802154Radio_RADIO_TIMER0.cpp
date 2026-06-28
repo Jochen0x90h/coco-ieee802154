@@ -341,7 +341,7 @@ bool Ieee802154Radio_RADIO_TIMER0::Node::request(uint16_t panId, const uint8_t *
         device_.sendBuffers_.push(buffer);
         return true;
     });*/
-    auto result = requestBuffers_.removeIf(
+    auto buffer = requestBuffers_.removeIf(
         [this, panId, destinationAddress, addressLength](Buffer &buffer, int) {
             auto mac = buffer.data_;
 
@@ -367,13 +367,13 @@ bool Ieee802154Radio_RADIO_TIMER0::Node::request(uint16_t panId, const uint8_t *
                 return false;
 
             return true;
-        },
-        [this](Buffer &buffer) {
-            // move buffer to sendBuffers
-            device_.sendBuffers_.push(buffer);
         });
-
-    return result != nullptr;
+    if (buffer != nullptr) {
+        // move buffer to sendBuffers
+        device_.sendBuffers_.push(*buffer);
+        return true;
+    }
+    return false;
 }
 
 
@@ -456,11 +456,7 @@ bool Ieee802154Radio_RADIO_TIMER0::Buffer::cancel() {
             break;
         case Mode::SEND:
             // remove from pending send transfers if not yet started, otherwise complete normally
-            //success = device.sendBuffers_.remove(*this, false);
-            success = device.sendBuffers_.removeIf(
-                [this](Buffer &buffer, int index) {
-                    return index > 0 && &buffer == this;
-                }) != nullptr;
+            success = device.sendBuffers_.removeExceptFirst(*this);
             break;
         }
     }
@@ -472,7 +468,7 @@ bool Ieee802154Radio_RADIO_TIMER0::Buffer::cancel() {
     return true;
 }
 
-void Ieee802154Radio_RADIO_TIMER0::Buffer::handle() {
+void Ieee802154Radio_RADIO_TIMER0::Buffer::onCompletion() {
     setReady();
 }
 

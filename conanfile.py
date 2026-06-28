@@ -29,7 +29,6 @@ class Project(ConanFile):
         self.requires("coco-usb/linux", options={"platform": self.options.platform}) # radio via USB
 
     def build_requirements(self):
-        #self.tool_requires("coco-toolchain/linux", options={"platform": self.options.platform})
         self.test_requires("coco-devboards/linux", options={"platform": self.options.platform})
 
     keep_imports = True

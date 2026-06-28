@@ -88,15 +88,15 @@ public:
         IntrusiveList<Buffer> buffers_;
 
         // list of active receive buffers
-        InterruptQueue2<Buffer> receiveBuffers_;
+        InterruptQueue<Buffer> receiveBuffers_;
 
         // list of buffers that can be sent on data request
-        InterruptQueue2<Buffer> requestBuffers_;
+        InterruptQueue<Buffer> requestBuffers_;
     };
 
     /// @brief Buffer for transferring data over the radio.
     /// Derives from IntrusiveListNode for the list of buffers and Loop_Queue::Handler to be notified from the event loop
-    class Buffer : public coco::Buffer, public IntrusiveListNode, public Loop_Queue::Handler {
+    class Buffer : public coco::Buffer, public IntrusiveListNode, public Loop_Queue::CompletionHandler {
         friend class Ieee802154Radio_RADIO_TIMER0;
     public:
         Buffer(Node &node);
@@ -107,7 +107,7 @@ public:
         bool cancel() override;
 
     protected:
-        void handle() override;
+        void onCompletion() override;
 
         Node &node_;
 
@@ -177,7 +177,7 @@ protected:
     uint32_t ifsDuration_ = 0;
 
     // list of active send transfers
-    InterruptQueue2<Buffer> sendBuffers_;
+    InterruptQueue<Buffer> sendBuffers_;
     uint8_t ackPacket_[4] = {5, 0x02, 0x00, 0};
 
     enum SendState : uint8_t {

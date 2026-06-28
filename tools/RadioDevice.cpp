@@ -1,4 +1,5 @@
 #include <coco/debug.hpp>
+#include <coco/Barrier.hpp>
 #include <coco/BufferReader.hpp>
 #include <coco/BufferWriter.hpp>
 #include <RadioDevice.hpp>

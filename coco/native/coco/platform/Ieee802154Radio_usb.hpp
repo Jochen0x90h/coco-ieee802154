@@ -1,5 +1,6 @@
 #pragma once
 
+#include <coco/Barrier.hpp>
 #include <coco/Ieee802154Radio.hpp>
 #include <coco/platform/UsbHost_native.hpp>
 
@@ -59,7 +60,7 @@ public:
         //LinkedList2<Buffer> receiveBuffers;
 
         // list of send buffers
-        IntrusiveList2<Buffer> sendBuffers_;
+        IntrusiveList<Buffer> sendBuffers_;
     };
 
     /// @brief Buffer for transferring data via USB over the radio.
