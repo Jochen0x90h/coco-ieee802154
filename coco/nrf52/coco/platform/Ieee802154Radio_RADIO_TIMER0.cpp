@@ -341,7 +341,7 @@ bool Ieee802154Radio_RADIO_TIMER0::Node::request(uint16_t panId, const uint8_t *
         device_.sendBuffers_.push(buffer);
         return true;
     });*/
-    auto buffer = requestBuffers_.removeIf(
+    auto buffer = requestBuffers_.findAndRemove(
         [this, panId, destinationAddress, addressLength](Buffer &buffer, int) {
             auto mac = buffer.data_;
 
