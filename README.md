@@ -3,7 +3,7 @@
 IEEE 802.15.4 module for CoCo
 
 ## Import
-Add coco-ieee802154/\<version> to your conanfile where version corresponds to the git tags
+Add coco-ieee802154/\<version> to your conanfile where version corresponds to a git tag.
 
 ## Features
 * IEEE 802.15.4 MAC

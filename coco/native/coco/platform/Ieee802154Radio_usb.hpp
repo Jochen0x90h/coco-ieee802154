@@ -2,7 +2,7 @@
 
 #include <coco/Barrier.hpp>
 #include <coco/Ieee802154Radio.hpp>
-#include <coco/platform/UsbHost_native.hpp>
+#include <coco/platform/UsbHostDevice_native.hpp>
 
 
 namespace coco {
